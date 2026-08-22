@@ -1,0 +1,36 @@
+/**
+ * Wrangler config for the NextGenDial API Worker.
+ *
+ * After running `npx wrangler d1 create autodialer_db`, replace
+ * the database_id placeholder below with the returned ID, then
+ * run `npx wrangler d1 migrations apply autodialer_db --local` to
+ * initialize the local SQLite replica.
+ *
+ * Secrets (set via `wrangler secret put <NAME>`):
+ *   TELNYX_API_KEY
+ *   TELNYX_PUBLIC_KEY
+ *
+ * Vars (plain text, set in [vars] block or via dashboard):
+ *   TELNYX_CONNECTION_ID
+ *   APP_BASE_URL
+ */
+{
+  "name": "nextgendial-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-09-23",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "autodialer_db",
+      "database_id": "0959508c-de01-4d09-8f8c-578e1e131284",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  "vars": {
+    "APP_BASE_URL": "https://nextgendial-api.abdulahadbutt420.workers.dev",
+    "ALLOWED_ORIGIN": "https://nextgendial-web.pages.dev"
+  }
+}

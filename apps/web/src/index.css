@@ -1,0 +1,824 @@
+/* ============================================================
+   NextGenDial — Design System
+   
+   Design intent: an operational tool an agent uses for 8-hour shifts.
+   Legibility and information density over decoration.
+   Single accent color (teal) reserved exclusively for live-call state.
+   Everything else: neutral, quiet, easy on the eyes.
+   ============================================================ */
+
+/* ── Google Fonts are loaded via index.html ── */
+
+/* ── Reset ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── Design Tokens ── */
+:root {
+  /* Background layers */
+  --bg-base:     #0c0e14;
+  --bg-surface:  #141720;
+  --bg-elevated: #1c2030;
+  --bg-hover:    #242840;
+  --bg-overlay:  rgba(12, 14, 20, 0.85);
+
+  /* Accent — electric teal, used ONLY for live-call state */
+  --accent:          hsl(175, 78%, 42%);
+  --accent-dim:      hsl(175, 60%, 28%);
+  --accent-glow:     hsla(175, 78%, 42%, 0.18);
+  --accent-border:   hsla(175, 78%, 42%, 0.45);
+
+  /* Status colors */
+  --status-available:  hsl(142, 72%, 42%);
+  --status-on-call:    var(--accent);
+  --status-wrap-up:    hsl(38, 92%, 55%);
+  --status-break:      hsl(220, 40%, 55%);
+  --status-dialing:    hsl(260, 70%, 65%);
+  --status-offline:    hsl(220, 15%, 42%);
+
+  /* Text */
+  --text-primary:   hsl(220, 20%, 92%);
+  --text-secondary: hsl(220, 15%, 60%);
+  --text-muted:     hsl(220, 12%, 42%);
+  --text-accent:    var(--accent);
+
+  /* Borders */
+  --border:        hsla(220, 20%, 100%, 0.07);
+  --border-strong: hsla(220, 20%, 100%, 0.14);
+
+  /* Semantic */
+  --danger:        hsl(4, 80%, 58%);
+  --danger-dim:    hsl(4, 60%, 22%);
+  --warning:       hsl(38, 92%, 55%);
+  --success:       hsl(142, 72%, 42%);
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Sizing */
+  --radius-sm:  4px;
+  --radius-md:  8px;
+  --radius-lg:  12px;
+  --radius-xl:  16px;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Shadows */
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.5);
+  --shadow-lg:  0 8px 32px rgba(0,0,0,0.6);
+
+  /* Transitions */
+  --transition-fast: 120ms ease;
+  --transition-med:  200ms ease;
+}
+
+/* ── Base ── */
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Focus visible (keyboard nav groundwork) ── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Typography ── */
+h1 { font-size: 20px; font-weight: 700; }
+h2 { font-size: 16px; font-weight: 600; }
+h3 { font-size: 14px; font-weight: 600; }
+
+/* ── Layout ── */
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.app-main {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 0;
+}
+
+.sidebar {
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  overflow-y: auto;
+}
+
+.main-content {
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  overflow-y: auto;
+}
+
+/* ── Header bar ── */
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-6);
+  height: 52px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.app-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.app-logo-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 8px var(--accent);
+}
+
+/* ── Active Call Bar ── */
+.active-call-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-6);
+  background: var(--bg-elevated);
+  border-bottom: 2px solid var(--accent-border);
+  box-shadow: 0 4px 20px var(--accent-glow), var(--shadow-md);
+  flex-shrink: 0;
+  animation: slideDown 200ms ease;
+}
+
+.active-call-bar--wrap-up {
+  border-bottom-color: hsla(38, 92%, 55%, 0.45);
+  box-shadow: 0 4px 20px hsla(38, 92%, 55%, 0.12), var(--shadow-md);
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+
+.call-bar-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+  flex-shrink: 0;
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.call-bar-indicator--wrap-up {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px hsla(38, 92%, 55%, 0.2);
+  animation: none;
+}
+
+@keyframes pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-glow); }
+  50%       { box-shadow: 0 0 0 6px transparent; }
+}
+
+.call-bar-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.call-bar-name {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.call-bar-detail {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.call-bar-timer {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+  min-width: 60px;
+  text-align: right;
+}
+
+.call-bar-timer--wrap-up {
+  color: var(--warning);
+}
+
+.call-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    transform var(--transition-fast), box-shadow var(--transition-fast);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.btn:not(:disabled):active { transform: scale(0.97); }
+
+.btn-primary {
+  background: var(--accent);
+  color: #0c0e14;
+  border-color: var(--accent);
+}
+.btn-primary:not(:disabled):hover {
+  background: hsl(175, 78%, 50%);
+  box-shadow: 0 0 16px var(--accent-glow);
+}
+
+.btn-danger {
+  background: var(--danger-dim);
+  color: hsl(4, 80%, 75%);
+  border-color: hsla(4, 80%, 58%, 0.3);
+}
+.btn-danger:not(:disabled):hover {
+  background: hsl(4, 60%, 28%);
+  border-color: var(--danger);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.btn-ghost:not(:disabled):hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.btn-icon {
+  padding: 7px;
+  aspect-ratio: 1;
+  border-radius: var(--radius-md);
+}
+
+/* ── Agent Status Toggle ── */
+.status-toggle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.status-toggle-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 0 var(--space-1);
+}
+
+.status-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.status-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  text-align: left;
+  width: 100%;
+}
+
+.status-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.status-btn:not(:disabled):hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.status-btn--active {
+  background: var(--bg-elevated);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot--available  { background: var(--status-available); box-shadow: 0 0 6px var(--status-available); }
+.status-dot--on_call    { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.status-dot--wrap_up    { background: var(--status-wrap-up); }
+.status-dot--dialing    { background: var(--status-dialing); }
+.status-dot--break      { background: var(--status-break); }
+.status-dot--offline    { background: var(--status-offline); }
+
+/* ── Agent Info Card ── */
+.agent-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.agent-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--accent-dim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.agent-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.agent-email {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.agent-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid;
+}
+
+.agent-status-badge--available  { background: hsla(142, 72%, 42%, 0.1); color: var(--status-available); border-color: hsla(142, 72%, 42%, 0.3); }
+.agent-status-badge--on_call    { background: var(--accent-glow); color: var(--accent); border-color: var(--accent-border); }
+.agent-status-badge--wrap_up    { background: hsla(38, 92%, 55%, 0.1); color: var(--warning); border-color: hsla(38, 92%, 55%, 0.3); }
+.agent-status-badge--dialing    { background: hsla(260, 70%, 65%, 0.1); color: var(--status-dialing); border-color: hsla(260, 70%, 65%, 0.3); }
+.agent-status-badge--break      { background: hsla(220, 40%, 55%, 0.1); color: var(--status-break); border-color: hsla(220, 40%, 55%, 0.3); }
+.agent-status-badge--offline    { background: hsla(220, 15%, 42%, 0.1); color: var(--status-offline); border-color: hsla(220, 15%, 42%, 0.3); }
+
+/* ── Card / Panel ── */
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+}
+
+.card-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
+/* ── Script Panel ── */
+.script-panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+/* ── Disposition Modal ── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 150ms ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.modal {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  padding: var(--space-8);
+  width: 100%;
+  max-width: 440px;
+  box-shadow: var(--shadow-lg);
+  animation: scaleIn 150ms ease;
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.95); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.modal-footer {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  justify-content: flex-end;
+}
+
+/* ── Form Controls ── */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.form-control {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 8px var(--space-3);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  width: 100%;
+}
+
+.form-control:focus {
+  outline: none;
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.form-control::placeholder { color: var(--text-muted); }
+
+select.form-control {
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2360657a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+  padding-right: var(--space-8);
+}
+
+textarea.form-control {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* ── Dialpad ── */
+.dialpad {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dialpad-display {
+  background: var(--bg-base);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--text-primary);
+  text-align: right;
+  min-height: 48px;
+}
+
+.dialpad-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-2);
+}
+
+.dialpad-key {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  font-weight: 600;
+  padding: var(--space-3);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1.2;
+}
+
+.dialpad-key-sub {
+  font-size: 8px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  margin-top: 2px;
+}
+
+.dialpad-key:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+.dialpad-key:active {
+  transform: scale(0.94);
+}
+
+/* ── Call History Table ── */
+.table-container {
+  overflow-x: auto;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+.table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.table tr:last-child td { border-bottom: none; }
+
+.table tbody tr {
+  transition: background var(--transition-fast);
+}
+
+.table tbody tr:hover td {
+  background: var(--bg-elevated);
+}
+
+.table-empty {
+  padding: var(--space-8);
+  text-align: center;
+  color: var(--text-muted);
+}
+
+/* ── Disposition Badge ── */
+.disposition-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.disposition-badge--sale           { background: hsla(142, 72%, 42%, 0.15); color: var(--success); }
+.disposition-badge--callback       { background: hsla(220, 70%, 65%, 0.15); color: hsl(220, 70%, 65%); }
+.disposition-badge--not_interested { background: hsla(220, 15%, 42%, 0.15); color: var(--text-muted); }
+.disposition-badge--wrong_number   { background: hsla(4, 80%, 58%, 0.1);  color: var(--danger); }
+.disposition-badge--voicemail      { background: hsla(38, 92%, 55%, 0.1);  color: var(--warning); }
+.disposition-badge--no_answer      { background: hsla(220, 15%, 42%, 0.1); color: var(--text-muted); }
+.disposition-badge--dnc_request    { background: hsla(4, 80%, 58%, 0.15); color: var(--danger); }
+
+/* ── Utility ── */
+.text-muted  { color: var(--text-muted); }
+.text-mono   { font-family: var(--font-mono); }
+.text-sm     { font-size: 12px; }
+.text-accent { color: var(--accent); }
+.gap-2       { gap: var(--space-2); }
+.flex        { display: flex; }
+.flex-col    { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.w-full      { width: 100%; }
+
+/* ── Login / Agent Select ── */
+.login-wrap {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-base);
+}
+
+.login-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-8);
+  width: 100%;
+  max-width: 380px;
+  box-shadow: var(--shadow-lg);
+}
+
+.login-logo {
+  text-align: center;
+  margin-bottom: var(--space-8);
+}
+
+.login-logo-icon {
+  width: 48px;
+  height: 48px;
+  background: var(--accent-dim);
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto var(--space-3);
+  font-size: 24px;
+}
+
+.login-title {
+  font-size: 20px;
+  font-weight: 700;
+  text-align: center;
+  margin-bottom: var(--space-2);
+}
+
+.login-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ── Spinner ── */
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Connection state banner ── */
+.connection-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.connection-banner--error {
+  background: hsla(4, 80%, 58%, 0.12);
+  color: var(--danger);
+  border-bottom: 1px solid hsla(4, 80%, 58%, 0.2);
+}
+
+.connection-banner--connecting {
+  background: hsla(260, 70%, 65%, 0.1);
+  color: var(--status-dialing);
+  border-bottom: 1px solid hsla(260, 70%, 65%, 0.2);
+}
