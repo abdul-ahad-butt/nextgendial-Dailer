@@ -15,7 +15,9 @@ import type {
   Disposition,
 } from '../types';
 
-const BASE = import.meta.env.VITE_API_BASE_URL || '/api';
+const envBase = import.meta.env.VITE_API_BASE_URL;
+// Ensure that if a base URL is provided, it always includes the /api prefix
+const BASE = envBase ? (envBase.endsWith('/api') ? envBase : `${envBase.replace(/\/$/, '')}/api`) : '/api';
 
 async function request<T>(
   path: string,
