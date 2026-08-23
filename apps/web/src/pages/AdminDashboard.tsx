@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
+import * as XLSX from 'xlsx';
 
 interface User {
   id: string;
@@ -8,8 +9,16 @@ interface User {
   created_at: string;
 }
 
+interface Batch {
+  id: string;
+  file_name: string;
+  total_leads: number;
+  uploaded_at: string;
+  assigned_agent_username: string | null;
+}
+
 export function AdminDashboard() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   
   // Agent State
   const [agents, setAgents] = useState<User[]>([]);
@@ -28,8 +37,14 @@ export function AdminDashboard() {
   const [uploadResult, setUploadResult] = useState<any>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // Batches State
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [loadingBatches, setLoadingBatches] = useState(false);
+  const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
+
   useEffect(() => {
     fetchAgents();
+    fetchBatches();
   }, []);
 
   const fetchAgents = async () => {
@@ -41,6 +56,32 @@ export function AdminDashboard() {
       console.error('Failed to load agents', err);
     } finally {
       setLoadingAgents(false);
+    }
+  };
+
+  const fetchBatches = async () => {
+    try {
+      setLoadingBatches(true);
+      const data = await api.admin.getBatches();
+      setBatches(data);
+    } catch (err) {
+      console.error('Failed to load batches', err);
+    } finally {
+      setLoadingBatches(false);
+    }
+  };
+
+  const handleDeleteBatch = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this batch and all its leads?')) return;
+    try {
+      setDeletingBatchId(id);
+      await api.admin.deleteBatch(id);
+      await fetchBatches();
+    } catch (err) {
+      console.error('Failed to delete batch', err);
+      alert('Failed to delete batch');
+    } finally {
+      setDeletingBatchId(null);
     }
   };
 
@@ -70,37 +111,50 @@ export function AdminDashboard() {
     setUploadError(null);
 
     try {
-      const text = await file.text();
-      // Basic CSV parser (assumes comma separated, no escaped commas inside quotes)
-      const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
       
-      if (lines.length === 0) throw new Error('File is empty');
+      const rows = XLSX.utils.sheet_to_json<any>(worksheet, { header: 1 });
+      if (rows.length < 2) {
+        throw new Error('File is empty or missing data rows');
+      }
 
-      // Assume first row is header
-      const headers = lines[0].toLowerCase().split(',').map(h => h.trim());
-      
-      const phoneIdx = headers.findIndex(h => h.includes('phone'));
-      const firstIdx = headers.findIndex(h => h.includes('first'));
-      const lastIdx = headers.findIndex(h => h.includes('last'));
+      const headers = (rows[0] as string[]).map(h => {
+        if (typeof h !== 'string') return '';
+        return h.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      });
+
+      // Fuzzy matching
+      const phoneIdx = headers.findIndex(h => ['phone', 'mobile', 'contact', 'tel', 'cell', 'phonenumber'].includes(h));
+      const firstIdx = headers.findIndex(h => ['first', 'fname', 'firstname'].includes(h));
+      const lastIdx = headers.findIndex(h => ['last', 'lname', 'lastname', 'surname'].includes(h));
 
       if (phoneIdx === -1) {
-        throw new Error('CSV must contain a column header with "phone" in it.');
+        throw new Error('Could not find a phone number column. Make sure you have a header like "Phone", "Mobile", or "Cell".');
       }
 
       const parsedLeads = [];
-      for (let i = 1; i < lines.length; i++) {
-        const columns = lines[i].split(',').map(c => c.trim());
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i] as any[];
+        // Skip entirely empty rows
+        if (!row || row.length === 0 || row.every(cell => !cell)) continue;
+
         parsedLeads.push({
-          phone_number: columns[phoneIdx],
-          first_name: firstIdx !== -1 ? columns[firstIdx] : undefined,
-          last_name: lastIdx !== -1 ? columns[lastIdx] : undefined,
+          phone_number: row[phoneIdx] != null ? String(row[phoneIdx]) : undefined,
+          first_name: firstIdx !== -1 && row[firstIdx] != null ? String(row[firstIdx]) : undefined,
+          last_name: lastIdx !== -1 && row[lastIdx] != null ? String(row[lastIdx]) : undefined,
         });
       }
 
-      const result = await api.admin.uploadLeads(selectedAgentId, parsedLeads);
+      const assignedUserId = selectedAgentId === 'pool' ? null : (selectedAgentId === 'me' && user ? user.id : selectedAgentId);
+      
+      const result = await api.admin.uploadLeads(assignedUserId, file.name, parsedLeads);
       setUploadResult(result);
+      fetchBatches(); // Refresh batches table
     } catch (err: any) {
-      setUploadError(err.message || 'Error processing CSV');
+      setUploadError(err.message || 'Error processing file');
     } finally {
       setUploading(false);
     }
@@ -220,7 +274,7 @@ export function AdminDashboard() {
 
             <form onSubmit={handleUploadLeads} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div className="form-group">
-                <label className="form-label" htmlFor="agent-select">Assign to Agent</label>
+                <label className="form-label" htmlFor="agent-select">Assign To</label>
                 <select 
                   id="agent-select" 
                   className="form-control" 
@@ -228,37 +282,95 @@ export function AdminDashboard() {
                   onChange={e => setSelectedAgentId(e.target.value)}
                   required
                 >
-                  <option value="" disabled>Select an agent...</option>
-                  {agents.map(a => (
-                    <option key={a.id} value={a.id}>{a.username}</option>
-                  ))}
+                  <option value="" disabled>Select assignment...</option>
+                  <option value="pool">General Pool (Unassigned)</option>
+                  <option value="me">Assign to me (Admin)</option>
+                  <optgroup label="Agents">
+                    {agents.map(a => (
+                      <option key={a.id} value={a.id}>{a.username}</option>
+                    ))}
+                  </optgroup>
                 </select>
               </div>
 
               <div className="form-group">
-                <label className="form-label" htmlFor="csv-file">CSV File</label>
+                <label className="form-label" htmlFor="csv-file">Spreadsheet File (.csv, .xlsx)</label>
                 <input 
                   id="csv-file" 
                   type="file" 
-                  accept=".csv"
+                  accept=".csv,.xlsx,.xls"
                   className="form-control" 
                   style={{ padding: '8px 12px' }}
                   onChange={e => setFile(e.target.files?.[0] || null)}
                   required
                 />
                 <p className="text-muted text-sm mt-2">
-                  Header row required. Must include a column with "phone" in the header (e.g. phone, phone_number). Optional: "first", "last" for names.
+                  Header row required. Automatically detects columns like "Phone", "Mobile", "First Name", "Last".
                 </p>
               </div>
 
               <button type="submit" className="btn btn-primary" disabled={uploading || !selectedAgentId || !file}>
-                {uploading ? <span className="spinner" /> : 'Process & Upload CSV'}
+                {uploading ? <span className="spinner" /> : 'Process & Upload Leads'}
               </button>
             </form>
           </div>
 
-          </div>
+        </div>
 
+        </div>
+
+        {/* FULL WIDTH: BATCHES TABLE */}
+        <div className="card" style={{ padding: 24, overflowX: 'auto' }}>
+          <h2 style={{ fontSize: 18, marginBottom: 16 }}>Uploaded Lead Sheets</h2>
+          {loadingBatches ? (
+            <span className="spinner" />
+          ) : batches.length === 0 ? (
+            <p className="text-muted text-sm">No lead sheets uploaded yet.</p>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                  <th style={{ padding: '12px 8px', fontWeight: 500 }}>File Name</th>
+                  <th style={{ padding: '12px 8px', fontWeight: 500 }}>Date</th>
+                  <th style={{ padding: '12px 8px', fontWeight: 500 }}>Leads</th>
+                  <th style={{ padding: '12px 8px', fontWeight: 500 }}>Assigned To</th>
+                  <th style={{ padding: '12px 8px', fontWeight: 500, textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batches.map(b => (
+                  <tr key={b.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 8px', fontWeight: 500 }}>{b.file_name}</td>
+                    <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
+                      {new Date(b.uploaded_at).toLocaleString()}
+                    </td>
+                    <td style={{ padding: '12px 8px' }}>{b.total_leads}</td>
+                    <td style={{ padding: '12px 8px' }}>
+                      {b.assigned_agent_username ? (
+                        <span style={{ padding: '2px 8px', background: 'var(--primary-dim)', color: 'var(--primary)', borderRadius: 12, fontSize: 12, fontWeight: 500 }}>
+                          {b.assigned_agent_username}
+                        </span>
+                      ) : (
+                        <span style={{ padding: '2px 8px', background: 'var(--surface-hover)', color: 'var(--text-muted)', borderRadius: 12, fontSize: 12, fontWeight: 500 }}>
+                          General Pool
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '12px 8px', textAlign: 'right' }}>
+                      <button 
+                        className="btn btn-ghost" 
+                        style={{ color: 'var(--danger)', padding: '6px 12px', fontSize: 13 }}
+                        disabled={deletingBatchId === b.id}
+                        onClick={() => handleDeleteBatch(b.id)}
+                      >
+                        {deletingBatchId === b.id ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Delete'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
 
       </main>

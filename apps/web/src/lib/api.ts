@@ -93,10 +93,18 @@ export const api = {
         body: JSON.stringify(data),
       }).then((r) => r.data),
 
-    uploadLeads: (assigned_user_id: string, leads: any[]) =>
-      request<{ inserted: number; skipped: number; errors: string[] }>('/admin/upload-leads', {
+    uploadLeads: (assigned_user_id: string | null, file_name: string, leads: any[]) =>
+      request<{ batch_id: string; inserted: number; skipped: number; errors: string[] }>('/admin/upload-leads', {
         method: 'POST',
-        body: JSON.stringify({ assigned_user_id, leads }),
+        body: JSON.stringify({ assigned_user_id, file_name, leads }),
+      }),
+
+    getBatches: () =>
+      request<{ data: any[] }>('/admin/batches').then((r) => r.data),
+
+    deleteBatch: (id: string) =>
+      request<{ deleted_batch_id: string }>(`/admin/batches/${id}`, {
+        method: 'DELETE',
       }),
   },
 
