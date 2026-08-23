@@ -11,6 +11,12 @@ agents.use('*', authMiddleware);
 
 agents.get('/:id', async (c) => {
   const id = c.req.param('id');
+  
+  // Self-Healing Schema Guard for new columns
+  try { await c.env.DB.prepare("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'offline';").run(); } catch (e) {}
+  try { await c.env.DB.prepare("ALTER TABLE users ADD COLUMN telnyx_credential_id TEXT;").run(); } catch (e) {}
+  try { await c.env.DB.prepare("ALTER TABLE users ADD COLUMN telnyx_sip_username TEXT;").run(); } catch (e) {}
+
   const user = await c.env.DB.prepare('SELECT id, username, status, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?')
     .bind(id)
     .first();
