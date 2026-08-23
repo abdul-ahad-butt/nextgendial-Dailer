@@ -107,18 +107,28 @@ export function AdminDashboard() {
   };
 
   return (
-    <div style={{ padding: 24, maxWidth: 900, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 32 }}>
+    <div className="app-layout">
       
-      {/* HEADER */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h1 style={{ margin: 0 }}>Admin Dashboard</h1>
-          <p className="text-muted" style={{ margin: 0, marginTop: 4 }}>Manage agents and leads</p>
+      {/* ── Header ── */}
+      <header className="app-header">
+        <div className="app-logo">
+          <div className="app-logo-dot" aria-hidden="true" />
+          NextGenDial Admin
         </div>
-        <button className="btn btn-ghost" onClick={logout}>Sign Out</button>
-      </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="btn btn-ghost" onClick={logout}>Sign Out</button>
+        </div>
+      </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
+      {/* ── Main Layout ── */}
+      <main className="main-content" style={{ maxWidth: 1000, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 32 }}>
+        
+        <div>
+          <h1 style={{ fontSize: 20, margin: 0 }}>Dashboard</h1>
+          <p className="text-muted" style={{ margin: 0, marginTop: 4 }}>Manage agents and assign leads.</p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
         
         {/* LEFT COLUMN: AGENT MANAGEMENT */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -140,7 +150,7 @@ export function AdminDashboard() {
                 <label className="form-label" htmlFor="username">Username</label>
                 <input
                   id="username"
-                  className="form-input"
+                  className="form-control"
                   type="text"
                   value={newUsername}
                   onChange={e => setNewUsername(e.target.value)}
@@ -151,7 +161,7 @@ export function AdminDashboard() {
                 <label className="form-label" htmlFor="password">Password</label>
                 <input
                   id="password"
-                  className="form-input"
+                  className="form-control"
                   type="password"
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
@@ -173,9 +183,9 @@ export function AdminDashboard() {
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {agents.map(a => (
-                  <div key={a.id} style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 8 }}>
+                  <div key={a.id} style={{ padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ fontWeight: 600 }}>{a.username}</div>
-                    <div className="text-muted text-sm">ID: {a.id}</div>
+                    <div className="text-muted text-sm" style={{ fontFamily: 'var(--font-mono)' }}>{a.id.slice(0, 8)}...</div>
                   </div>
                 ))}
               </div>
@@ -213,7 +223,7 @@ export function AdminDashboard() {
                 <label className="form-label" htmlFor="agent-select">Assign to Agent</label>
                 <select 
                   id="agent-select" 
-                  className="form-input" 
+                  className="form-control" 
                   value={selectedAgentId} 
                   onChange={e => setSelectedAgentId(e.target.value)}
                   required
@@ -231,7 +241,7 @@ export function AdminDashboard() {
                   id="csv-file" 
                   type="file" 
                   accept=".csv"
-                  className="form-input" 
+                  className="form-control" 
                   style={{ padding: '8px 12px' }}
                   onChange={e => setFile(e.target.files?.[0] || null)}
                   required
@@ -247,9 +257,11 @@ export function AdminDashboard() {
             </form>
           </div>
 
+          </div>
+
         </div>
 
-      </div>
+      </main>
     </div>
   );
 }

@@ -51,11 +51,12 @@ export function Login() {
             style={{
               color: 'var(--danger)',
               fontSize: 13,
-              padding: '10px 14px',
-              background: 'var(--danger-dim)',
-              border: '1px solid var(--danger-border)',
+              padding: '12px 16px',
+              background: 'hsla(4, 80%, 58%, 0.1)',
+              border: '1px solid hsla(4, 80%, 58%, 0.3)',
               borderRadius: 8,
-              marginBottom: 16,
+              marginBottom: 20,
+              textAlign: 'center',
             }}
           >
             {error}
@@ -67,7 +68,7 @@ export function Login() {
             <label className="form-label" htmlFor="username">Username</label>
             <input
               id="username"
-              className="form-input"
+              className="form-control"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -79,7 +80,7 @@ export function Login() {
             <label className="form-label" htmlFor="password">Password</label>
             <input
               id="password"
-              className="form-input"
+              className="form-control"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

@@ -122,9 +122,13 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 export async function signJWT(
   payload: { sub: string; role: 'admin' | 'agent' },
-  secret: string,
+  secret: string | undefined,
   expiresInSeconds = 86400
 ): Promise<string> {
+  if (!secret) {
+    throw new Error('JWT_SECRET is not configured on the server.');
+  }
+
   const header = { alg: 'HS256', typ: 'JWT' };
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + expiresInSeconds;
@@ -155,7 +159,12 @@ export async function signJWT(
   return `${dataToSign}.${encodedSignature}`;
 }
 
-export async function verifyJWT(token: string, secret: string): Promise<{ sub: string; role: string } | null> {
+export async function verifyJWT(token: string, secret: string | undefined): Promise<{ sub: string; role: string } | null> {
+  if (!secret) {
+    console.error('JWT_SECRET is not configured on the server.');
+    return null;
+  }
+
   const parts = token.split('.');
   if (parts.length !== 3) return null;
 

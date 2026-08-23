@@ -725,6 +725,20 @@ textarea.form-control {
 .disposition-badge--no_answer      { background: hsla(220, 15%, 42%, 0.1); color: var(--text-muted); }
 .disposition-badge--dnc_request    { background: hsla(4, 80%, 58%, 0.15); color: var(--danger); }
 
+/* ── Status Badge (Leads) ── */
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.status-badge--pending { background: hsla(38, 92%, 55%, 0.15); color: var(--warning); }
+.status-badge--called  { background: hsla(220, 70%, 65%, 0.15); color: hsl(220, 70%, 65%); }
+.status-badge--converted { background: hsla(142, 72%, 42%, 0.15); color: var(--success); }
+
 /* ── Utility ── */
 .text-muted  { color: var(--text-muted); }
 .text-mono   { font-family: var(--font-mono); }
@@ -743,17 +757,21 @@ textarea.form-control {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-base);
+  background: radial-gradient(circle at top right, hsla(175, 78%, 42%, 0.1), transparent 40%),
+              radial-gradient(circle at bottom left, hsla(220, 40%, 55%, 0.08), transparent 40%),
+              var(--bg-base);
 }
 
 .login-card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+  background: hsla(220, 20%, 15%, 0.4);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid hsla(220, 20%, 100%, 0.08);
   border-radius: var(--radius-xl);
-  padding: var(--space-8);
+  padding: 40px var(--space-8);
   width: 100%;
   max-width: 380px;
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
 }
 
 .login-logo {
@@ -762,22 +780,28 @@ textarea.form-control {
 }
 
 .login-logo-icon {
-  width: 48px;
-  height: 48px;
-  background: var(--accent-dim);
+  width: 56px;
+  height: 56px;
+  background: linear-gradient(135deg, var(--accent-dim), hsla(175, 78%, 42%, 0.2));
+  border: 1px solid var(--accent-border);
   border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto var(--space-3);
-  font-size: 24px;
+  margin: 0 auto var(--space-4);
+  font-size: 28px;
+  box-shadow: 0 4px 16px var(--accent-glow);
 }
 
 .login-title {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 800;
   text-align: center;
   margin-bottom: var(--space-2);
+  background: linear-gradient(135deg, hsl(220, 20%, 95%), hsl(220, 15%, 60%));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.02em;
 }
 
 .login-subtitle {
