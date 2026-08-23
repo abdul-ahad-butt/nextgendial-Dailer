@@ -13,6 +13,7 @@ import type { AppEnv } from './types';
 import authRoute from './routes/auth';
 import adminRoute from './routes/admin';
 import leadsRoute from './routes/leads';
+import { mockRoute } from './routes/mock';
 
 const app = new Hono<AppEnv>();
 
@@ -43,6 +44,9 @@ app.get('/api/health', (c) => c.json({ status: 'ok', ts: new Date().toISOString(
 app.route('/api/auth', authRoute);
 app.route('/api/admin', adminRoute);
 app.route('/api/leads', leadsRoute);
+
+// Mock routes to prevent frontend crashes from legacy features
+app.route('/api', mockRoute);
 
 // ----------------------------------------------------------------
 // Fallbacks
