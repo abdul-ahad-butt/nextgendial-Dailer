@@ -229,17 +229,24 @@ admin.post('/numbers/assign', zValidator('json', assignNumberSchema), async (c) 
     return c.json({ error: 'Phone number not found' }, 404);
   }
 
+  // Self-Healing Schema Guard
+  try {
+    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN assigned_phone_number TEXT;").run();
+  } catch (e) {
+    // Column already exists, ignore error
+  }
+
   if (user_id) {
     // Assign to new user
     await c.env.DB.batch([
-      c.env.DB.prepare('UPDATE phone_numbers SET assigned_to_user_id = ? WHERE id = ?').bind(user_id, phone_id),
-      c.env.DB.prepare('UPDATE users SET assigned_phone_number = ? WHERE id = ?').bind(phone.phone_number, user_id),
+      c.env.DB.prepare("UPDATE phone_numbers SET assigned_to_user_id = ? WHERE phone_number = ? OR id = ?").bind(user_id, phone.phone_number, phone_id),
+      c.env.DB.prepare("UPDATE users SET assigned_phone_number = ? WHERE id = ? OR username = ?").bind(phone.phone_number, user_id, user_id)
     ]);
   } else {
     // Unassign
     await c.env.DB.batch([
-      c.env.DB.prepare('UPDATE phone_numbers SET assigned_to_user_id = NULL WHERE id = ?').bind(phone_id),
-      c.env.DB.prepare('UPDATE users SET assigned_phone_number = NULL WHERE assigned_phone_number = ?').bind(phone.phone_number),
+      c.env.DB.prepare("UPDATE phone_numbers SET assigned_to_user_id = NULL WHERE phone_number = ? OR id = ?").bind(phone.phone_number, phone_id),
+      c.env.DB.prepare("UPDATE users SET assigned_phone_number = NULL WHERE assigned_phone_number = ?").bind(phone.phone_number)
     ]);
   }
 
