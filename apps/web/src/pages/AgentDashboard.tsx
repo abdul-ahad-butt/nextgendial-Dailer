@@ -185,6 +185,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             <Dialer
               onCall={handleManualCall}
               disabled={
+                connectionState !== 'ready' ||
                 displayAgent.status === 'on_call' ||
                 displayAgent.status === 'dialing' ||
                 displayAgent.status === 'wrap_up'
@@ -235,8 +236,9 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                           <button 
                             className="btn btn-primary" 
                             style={{ padding: '4px 12px', fontSize: 13 }}
-                            disabled={displayAgent.status === 'on_call' || displayAgent.status === 'dialing' || displayAgent.status === 'wrap_up'}
+                            disabled={connectionState !== 'ready' || displayAgent.status === 'on_call' || displayAgent.status === 'dialing' || displayAgent.status === 'wrap_up'}
                             onClick={() => handleManualCall(lead.phone_number, lead.id)}
+                            title={connectionState !== 'ready' ? 'WebRTC Not Connected' : ''}
                           >
                             Dial
                           </button>

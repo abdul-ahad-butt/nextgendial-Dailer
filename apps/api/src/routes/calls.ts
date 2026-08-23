@@ -59,4 +59,36 @@ calls.post('/outbound', zValidator('json', outboundCallSchema), async (c) => {
   }
 });
 
+const manualCallSchema = z.object({
+  agentId: z.string().uuid(),
+  phoneNumber: z.string().min(1),
+  leadId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
+  telnyx_call_control_id: z.string().optional(),
+});
+
+calls.post('/manual', zValidator('json', manualCallSchema), async (c) => {
+  const body = c.req.valid('json');
+  
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  
+  await c.env.DB.prepare(`
+    INSERT INTO call_logs (id, agent_id, lead_id, campaign_id, telnyx_call_control_id, direction, status, start_time, created_at)
+    VALUES (?, ?, ?, ?, ?, 'outbound', 'in-progress', ?, ?)
+  `)
+  .bind(
+    id,
+    body.agentId,
+    body.leadId || null,
+    body.campaignId || null,
+    body.telnyx_call_control_id || null,
+    now,
+    now
+  ).run();
+  
+  const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
+  return c.json({ data: callLog });
+});
+
 export default calls;
