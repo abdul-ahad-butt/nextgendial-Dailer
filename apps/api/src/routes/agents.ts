@@ -55,37 +55,45 @@ agents.post('/:id/webrtc-token', async (c) => {
 
   if (!credentialId) {
     // Attempt auto-provisioning
-    if (c.env.TELNYX_API_KEY && c.env.TELNYX_CONNECTION_ID) {
-      const sipUsername = user.telnyx_sip_username || `agent_${id.replace(/-/g, '')}`;
-      try {
-        const telnyxRes = await fetch('https://api.telnyx.com/v2/telephony_credentials', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${c.env.TELNYX_API_KEY}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            connection_id: c.env.TELNYX_CONNECTION_ID,
-            sip_username: sipUsername,
-            sip_password: crypto.randomUUID().slice(0, 16) + 'Aa1!' // Requires complexity
-          })
-        });
+    if (!c.env.TELNYX_API_KEY) {
+      return c.json({ error: 'Missing TELNYX_API_KEY in Cloudflare Worker secrets' }, 400);
+    }
+    if (!c.env.TELNYX_CONNECTION_ID) {
+      return c.json({ error: 'Missing TELNYX_CONNECTION_ID in Cloudflare Worker secrets' }, 400);
+    }
+    
+    const sipUsername = user.telnyx_sip_username || `agent_${id.replace(/-/g, '')}`;
+    try {
+      const telnyxRes = await fetch('https://api.telnyx.com/v2/telephony_credentials', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${c.env.TELNYX_API_KEY}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          connection_id: c.env.TELNYX_CONNECTION_ID,
+          sip_username: sipUsername,
+          sip_password: crypto.randomUUID().slice(0, 16) + 'Aa1!' // Requires complexity
+        })
+      });
+      
+      if (telnyxRes.ok) {
+        const telnyxData = await telnyxRes.json() as any;
+        credentialId = telnyxData.data.id;
         
-        if (telnyxRes.ok) {
-          const telnyxData = await telnyxRes.json() as any;
-          credentialId = telnyxData.data.id;
-          
-          // Update database with new credentials
-          await c.env.DB.prepare('UPDATE users SET telnyx_credential_id = ?, telnyx_sip_username = ? WHERE id = ?')
-            .bind(credentialId, sipUsername, id)
-            .run();
-        } else {
-          console.error('[telnyx] failed to auto-provision telephony credential:', await telnyxRes.text());
-        }
-      } catch (e) {
-        console.error('[telnyx] error auto-provisioning telephony credential:', e);
+        // Update database with new credentials
+        await c.env.DB.prepare('UPDATE users SET telnyx_credential_id = ?, telnyx_sip_username = ? WHERE id = ?')
+          .bind(credentialId, sipUsername, id)
+          .run();
+      } else {
+        const errText = await telnyxRes.text();
+        console.error('[telnyx] failed to auto-provision telephony credential:', errText);
+        return c.json({ error: `Telnyx auto-provisioning failed: ${errText}` }, 400);
       }
+    } catch (e) {
+      console.error('[telnyx] error auto-provisioning telephony credential:', e);
+      return c.json({ error: 'Failed to contact Telnyx for auto-provisioning' }, 500);
     }
   }
 
