@@ -32,16 +32,57 @@ admin.post('/users', zValidator('json', createUserSchema), async (c) => {
   const id = crypto.randomUUID();
   const passwordHash = await hashPassword(password);
   const role = 'agent';
+  const sipUsername = `agent_${id.replace(/-/g, '')}`;
+
+  // Self-Healing Schema Guard for new columns
+  try {
+    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'offline';").run();
+  } catch (e) {}
+  try {
+    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN telnyx_credential_id TEXT;").run();
+  } catch (e) {}
+  try {
+    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN telnyx_sip_username TEXT;").run();
+  } catch (e) {}
+
+  // Create Telephony Credential on Telnyx
+  let telnyxCredentialId = null;
+  if (c.env.TELNYX_API_KEY && c.env.TELNYX_CONNECTION_ID) {
+    try {
+      const telnyxRes = await fetch('https://api.telnyx.com/v2/telephony_credentials', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${c.env.TELNYX_API_KEY}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          connection_id: c.env.TELNYX_CONNECTION_ID,
+          sip_username: sipUsername,
+          sip_password: crypto.randomUUID().slice(0, 16) + 'Aa1!' // Requires complexity
+        })
+      });
+      
+      if (telnyxRes.ok) {
+        const telnyxData = await telnyxRes.json() as any;
+        telnyxCredentialId = telnyxData.data.id;
+      } else {
+        console.error('[telnyx] failed to create telephony credential:', await telnyxRes.text());
+      }
+    } catch (e) {
+      console.error('[telnyx] error creating telephony credential:', e);
+    }
+  }
 
   await c.env.DB.prepare(
-    'INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, ?)'
+    'INSERT INTO users (id, username, password_hash, role, telnyx_credential_id, telnyx_sip_username, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
-    .bind(id, username, passwordHash, role)
+    .bind(id, username, passwordHash, role, telnyxCredentialId, sipUsername, 'offline')
     .run();
 
   // Return the created user (omitting password_hash)
   const createdUser = await c.env.DB.prepare(
-    'SELECT id, username, role, created_at FROM users WHERE id = ?'
+    'SELECT id, username, role, created_at, status, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?'
   )
     .bind(id)
     .first();

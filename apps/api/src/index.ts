@@ -14,6 +14,7 @@ import authRoute from './routes/auth';
 import adminRoute from './routes/admin';
 import leadsRoute from './routes/leads';
 import agentRoute from './routes/agent';
+import agentsRoute from './routes/agents';
 import callsRoute from './routes/calls';
 import webhooksRoute from './routes/webhooks';
 import { mockRoute } from './routes/mock';
@@ -48,6 +49,7 @@ app.route('/api/auth', authRoute);
 app.route('/api/admin', adminRoute);
 app.route('/api/leads', leadsRoute);
 app.route('/api/agent', agentRoute);
+app.route('/api/agents', agentsRoute);
 app.route('/api/calls', callsRoute);
 app.route('/api/webhooks', webhooksRoute);
 
