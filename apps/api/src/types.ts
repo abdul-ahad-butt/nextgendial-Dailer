@@ -38,6 +38,11 @@ export interface Env {
    * JWT Secret key for signing and verifying authentication tokens.
    */
   JWT_SECRET: string;
+
+  /**
+   * The default Telnyx phone number used if an agent doesn't have one assigned.
+   */
+  TELNYX_DEFAULT_NUMBER: string;
 }
 
 /**

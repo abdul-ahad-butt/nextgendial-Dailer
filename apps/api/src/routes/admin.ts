@@ -184,6 +184,24 @@ admin.delete('/batches/:id', async (c) => {
 
 // GET /numbers
 admin.get('/numbers', async (c) => {
+  // Auto-Initialization Safeguard
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS phone_numbers (
+        id TEXT PRIMARY KEY,
+        phone_number TEXT UNIQUE NOT NULL,
+        friendly_name TEXT,
+        assigned_to_user_id TEXT,
+        status TEXT DEFAULT 'active',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `),
+    c.env.DB.prepare(`
+      INSERT OR IGNORE INTO phone_numbers (id, phone_number, friendly_name, status)
+      VALUES ('num_default_01', '+19564461280', 'Main Outbound Line', 'active')
+    `)
+  ]);
+
   const { results } = await c.env.DB.prepare(
     `SELECT p.id, p.phone_number, p.friendly_name, p.status, p.assigned_to_user_id, u.username as assigned_agent_username
      FROM phone_numbers p

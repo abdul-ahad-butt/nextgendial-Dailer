@@ -41,6 +41,12 @@ export function AdminDashboard() {
   const [uploadResult, setUploadResult] = useState<any>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
+  // Manual Mapping State
+  const [needsManualMapping, setNeedsManualMapping] = useState(false);
+  const [availableHeaders, setAvailableHeaders] = useState<string[]>([]);
+  const [selectedPhoneColIdx, setSelectedPhoneColIdx] = useState<number | ''>('');
+  const [pendingUploadData, setPendingUploadData] = useState<any>(null);
+
   // Batches State
   const [batches, setBatches] = useState<Batch[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
@@ -106,6 +112,58 @@ export function AdminDashboard() {
     }
   };
 
+  const processLeads = async (rows: any[], headers: string[], manualPhoneIdx?: number) => {
+    // Fuzzy matching
+    let phoneIdx = manualPhoneIdx !== undefined ? manualPhoneIdx : headers.findIndex(h => 
+      ['phone', 'phonenumber', 'mobile', 'cell', 'contact', 'tel', 'number', 'num', 'usa', 'profilephone'].includes(h)
+    );
+    const firstIdx = headers.findIndex(h => ['first', 'fname', 'firstname'].includes(h));
+    const lastIdx = headers.findIndex(h => ['last', 'lname', 'lastname', 'surname'].includes(h));
+
+    if (phoneIdx === -1) {
+      setNeedsManualMapping(true);
+      setAvailableHeaders(rows[0] as string[]);
+      setPendingUploadData({ rows, headers });
+      setUploading(false);
+      return;
+    }
+
+    setNeedsManualMapping(false);
+
+    const parsedLeads = [];
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i] as any[];
+      // Skip entirely empty rows
+      if (!row || row.length === 0 || row.every(cell => !cell)) continue;
+
+      parsedLeads.push({
+        phone_number: row[phoneIdx] != null ? String(row[phoneIdx]) : undefined,
+        first_name: firstIdx !== -1 && row[firstIdx] != null ? String(row[firstIdx]) : undefined,
+        last_name: lastIdx !== -1 && row[lastIdx] != null ? String(row[lastIdx]) : undefined,
+      });
+    }
+
+    const assignedUserId = selectedAgentId === 'pool' ? null : (selectedAgentId === 'me' && user ? user.sub : selectedAgentId);
+    
+    const result = await api.admin.uploadLeads(assignedUserId, file!.name, parsedLeads);
+    setUploadResult(result);
+    setFile(null); // Reset file
+    fetchBatches(); // Refresh batches table
+    setUploading(false);
+  };
+
+  const confirmManualUpload = async () => {
+    if (selectedPhoneColIdx === '' || !pendingUploadData) return;
+    setUploading(true);
+    setUploadError(null);
+    try {
+      await processLeads(pendingUploadData.rows, pendingUploadData.headers, Number(selectedPhoneColIdx));
+    } catch (err: any) {
+      setUploadError(err.message || 'Error processing file');
+      setUploading(false);
+    }
+  };
+
   const handleUploadLeads = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAgentId || !file) return;
@@ -113,6 +171,7 @@ export function AdminDashboard() {
     setUploading(true);
     setUploadResult(null);
     setUploadError(null);
+    setNeedsManualMapping(false);
 
     try {
       const data = await file.arrayBuffer();
@@ -130,36 +189,9 @@ export function AdminDashboard() {
         return h.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
       });
 
-      // Fuzzy matching
-      const phoneIdx = headers.findIndex(h => ['phone', 'mobile', 'contact', 'tel', 'cell', 'phonenumber'].includes(h));
-      const firstIdx = headers.findIndex(h => ['first', 'fname', 'firstname'].includes(h));
-      const lastIdx = headers.findIndex(h => ['last', 'lname', 'lastname', 'surname'].includes(h));
-
-      if (phoneIdx === -1) {
-        throw new Error('Could not find a phone number column. Make sure you have a header like "Phone", "Mobile", or "Cell".');
-      }
-
-      const parsedLeads = [];
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i] as any[];
-        // Skip entirely empty rows
-        if (!row || row.length === 0 || row.every(cell => !cell)) continue;
-
-        parsedLeads.push({
-          phone_number: row[phoneIdx] != null ? String(row[phoneIdx]) : undefined,
-          first_name: firstIdx !== -1 && row[firstIdx] != null ? String(row[firstIdx]) : undefined,
-          last_name: lastIdx !== -1 && row[lastIdx] != null ? String(row[lastIdx]) : undefined,
-        });
-      }
-
-      const assignedUserId = selectedAgentId === 'pool' ? null : (selectedAgentId === 'me' && user ? user.sub : selectedAgentId);
-      
-      const result = await api.admin.uploadLeads(assignedUserId, file.name, parsedLeads);
-      setUploadResult(result);
-      fetchBatches(); // Refresh batches table
+      await processLeads(rows, headers);
     } catch (err: any) {
       setUploadError(err.message || 'Error processing file');
-    } finally {
       setUploading(false);
     }
   };
@@ -297,47 +329,76 @@ export function AdminDashboard() {
               </div>
             )}
 
-            <form onSubmit={handleUploadLeads} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div className="form-group">
-                <label className="form-label" htmlFor="agent-select">Assign To</label>
-                <select 
-                  id="agent-select" 
-                  className="form-control" 
-                  value={selectedAgentId} 
-                  onChange={e => setSelectedAgentId(e.target.value)}
-                  required
-                >
-                  <option value="" disabled>Select assignment...</option>
-                  <option value="pool">General Pool (Unassigned)</option>
-                  <option value="me">Assign to me (Admin)</option>
-                  <optgroup label="Agents">
-                    {agents.map(a => (
-                      <option key={a.id} value={a.id}>{a.username}</option>
-                    ))}
-                  </optgroup>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label" htmlFor="csv-file">Spreadsheet File (.csv, .xlsx)</label>
-                <input 
-                  id="csv-file" 
-                  type="file" 
-                  accept=".csv,.xlsx,.xls"
-                  className="form-control" 
-                  style={{ padding: '8px 12px' }}
-                  onChange={e => setFile(e.target.files?.[0] || null)}
-                  required
-                />
-                <p className="text-muted text-sm mt-2">
-                  Header row required. Automatically detects columns like "Phone", "Mobile", "First Name", "Last".
+            {needsManualMapping ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <p style={{ color: 'var(--warning)', fontSize: 14 }}>
+                  Could not automatically detect the phone number column. Please select it manually:
                 </p>
+                <div className="form-group">
+                  <label className="form-label">Phone Number Column</label>
+                  <select 
+                    className="form-control"
+                    value={selectedPhoneColIdx}
+                    onChange={e => setSelectedPhoneColIdx(e.target.value === '' ? '' : Number(e.target.value))}
+                  >
+                    <option value="" disabled>Select a column...</option>
+                    {availableHeaders.map((h, i) => (
+                      <option key={i} value={i}>{h || `Column ${i + 1}`}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button className="btn btn-primary" onClick={confirmManualUpload} disabled={uploading || selectedPhoneColIdx === ''}>
+                    {uploading ? <span className="spinner" /> : 'Confirm & Upload'}
+                  </button>
+                  <button className="btn btn-ghost" onClick={() => { setNeedsManualMapping(false); setPendingUploadData(null); }} disabled={uploading}>
+                    Cancel
+                  </button>
+                </div>
               </div>
+            ) : (
+              <form onSubmit={handleUploadLeads} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="agent-select">Assign To</label>
+                  <select 
+                    id="agent-select" 
+                    className="form-control" 
+                    value={selectedAgentId} 
+                    onChange={e => setSelectedAgentId(e.target.value)}
+                    required
+                  >
+                    <option value="" disabled>Select assignment...</option>
+                    <option value="pool">General Pool (Unassigned)</option>
+                    <option value="me">Assign to me (Admin)</option>
+                    <optgroup label="Agents">
+                      {agents.map(a => (
+                        <option key={a.id} value={a.id}>{a.username}</option>
+                      ))}
+                    </optgroup>
+                  </select>
+                </div>
 
-              <button type="submit" className="btn btn-primary" disabled={uploading || !selectedAgentId || !file}>
-                {uploading ? <span className="spinner" /> : 'Process & Upload Leads'}
-              </button>
-            </form>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="csv-file">Spreadsheet File (.csv, .xlsx)</label>
+                  <input 
+                    id="csv-file" 
+                    type="file" 
+                    accept=".csv,.xlsx,.xls"
+                    className="form-control" 
+                    style={{ padding: '8px 12px' }}
+                    onChange={e => setFile(e.target.files?.[0] || null)}
+                    required
+                  />
+                  <p className="text-muted text-sm mt-2">
+                    Header row required. Automatically detects columns like "Phone", "Mobile", "First Name", "Last".
+                  </p>
+                </div>
+
+                <button type="submit" className="btn btn-primary" disabled={uploading || !selectedAgentId || !file}>
+                  {uploading ? <span className="spinner" /> : 'Process & Upload Leads'}
+                </button>
+              </form>
+            )}
           </div>
 
         </div>
