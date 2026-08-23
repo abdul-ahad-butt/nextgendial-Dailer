@@ -2,7 +2,6 @@ import { useCallback, useState, useEffect } from 'react';
 import { api } from '../lib/api';
 
 interface Props {
-  agentId: string;
   onCall: (number: string) => void; 
   disabled?: boolean;
 }
@@ -22,7 +21,7 @@ const KEYS = [
   { digit: '#', sub: '' },
 ];
 
-export function Dialer({ agentId, onCall, disabled = false }: Props) {
+export function Dialer({ onCall, disabled = false }: Props) {
   const [number, setNumber] = useState('');
   const [callerId, setCallerId] = useState<string | null>(null);
 

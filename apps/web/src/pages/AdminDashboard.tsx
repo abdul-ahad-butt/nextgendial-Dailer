@@ -152,7 +152,7 @@ export function AdminDashboard() {
         });
       }
 
-      const assignedUserId = selectedAgentId === 'pool' ? null : (selectedAgentId === 'me' && user ? user.id : selectedAgentId);
+      const assignedUserId = selectedAgentId === 'pool' ? null : (selectedAgentId === 'me' && user ? user.sub : selectedAgentId);
       
       const result = await api.admin.uploadLeads(assignedUserId, file.name, parsedLeads);
       setUploadResult(result);

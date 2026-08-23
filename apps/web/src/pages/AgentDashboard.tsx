@@ -183,7 +183,6 @@ export function AgentDashboard({ agent, onLogout }: Props) {
           <div>
             <div className="card-title">Manual Dial</div>
             <Dialer
-              agentId={agent.id}
               onCall={handleManualCall}
               disabled={
                 displayAgent.status === 'on_call' ||
