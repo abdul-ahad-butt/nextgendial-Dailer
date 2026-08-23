@@ -11,6 +11,7 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
     "paths": {
       "@nextgendial/shared-types": ["../../packages/shared-types/index.ts"]
     }
