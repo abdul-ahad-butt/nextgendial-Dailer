@@ -33,4 +33,25 @@ export interface Env {
    * Allowed origin for CORS (the frontend URL).
    */
   ALLOWED_ORIGIN: string;
+
+  /**
+   * JWT Secret key for signing and verifying authentication tokens.
+   */
+  JWT_SECRET: string;
 }
+
+/**
+ * Hono context variables injected by middleware.
+ */
+export interface Variables {
+  userId: string;
+  role: 'admin' | 'agent';
+}
+
+/**
+ * Convenience type for Hono app generic argument.
+ */
+export type AppEnv = {
+  Bindings: Env;
+  Variables: Variables;
+};

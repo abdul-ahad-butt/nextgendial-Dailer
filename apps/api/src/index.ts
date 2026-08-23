@@ -8,15 +8,13 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
-import type { Env } from './types';
+import type { AppEnv } from './types';
 
-import agentsRoute from './routes/agents';
-import campaignsRoute from './routes/campaigns';
+import authRoute from './routes/auth';
+import adminRoute from './routes/admin';
 import leadsRoute from './routes/leads';
-import callsRoute from './routes/calls';
-import webhooksRoute from './routes/webhooks';
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AppEnv>();
 
 // ----------------------------------------------------------------
 // Global middleware
@@ -24,10 +22,12 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', logger());
 
-// CORS: allow the frontend origin configured in environment variables
+// CORS: allow origin *, specific methods and headers
 app.use('/api/*', async (c, next) =>
   cors({
-    origin: c.env.ALLOWED_ORIGIN,
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    allowHeaders: ['Authorization', 'Content-Type'],
     credentials: true,
   })(c, next),
 );
@@ -40,14 +40,12 @@ app.get('/api/health', (c) => c.json({ status: 'ok', ts: new Date().toISOString(
 // ----------------------------------------------------------------
 // Route groups
 // ----------------------------------------------------------------
-app.route('/api/agents', agentsRoute);
-app.route('/api/campaigns', campaignsRoute);
+app.route('/api/auth', authRoute);
+app.route('/api/admin', adminRoute);
 app.route('/api/leads', leadsRoute);
-app.route('/api/calls', callsRoute);
-app.route('/api/webhooks', webhooksRoute);
 
 // ----------------------------------------------------------------
-// 404 fallback
+// Fallbacks
 // ----------------------------------------------------------------
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
 

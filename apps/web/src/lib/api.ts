@@ -17,20 +17,37 @@ import type {
 
 const envBase = import.meta.env.VITE_API_BASE_URL;
 // Ensure that if a base URL is provided, it always includes the /api prefix
-const BASE = envBase ? (envBase.endsWith('/api') ? envBase : `${envBase.replace(/\/$/, '')}/api`) : '/api';
+export const BASE = envBase ? (envBase.endsWith('/api') ? envBase : `${envBase.replace(/\/$/, '')}/api`) : '/api';
+
 
 async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const token = localStorage.getItem('auth_token');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...((init?.headers as Record<string, string>) || {}),
+  };
+
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
     ...init,
+    headers,
   });
 
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText })) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    let errorMessage = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      errorMessage = body.error || errorMessage;
+    } catch (e) {
+      // ignore JSON parse error
+    }
+    throw new Error(errorMessage);
   }
 
   return res.json() as Promise<T>;
@@ -62,6 +79,25 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(data),
       }).then((r) => r.data),
+  },
+
+// ── Admin ───────────────────────────────────────────────────
+
+  admin: {
+    getAgents: () =>
+      request<{ data: any[] }>('/admin/users').then((r) => r.data),
+
+    createAgent: (data: { username: string; password: string }) =>
+      request<{ data: any }>('/admin/users', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }).then((r) => r.data),
+
+    uploadLeads: (assigned_user_id: string, leads: any[]) =>
+      request<{ inserted: number; skipped: number; errors: string[] }>('/admin/upload-leads', {
+        method: 'POST',
+        body: JSON.stringify({ assigned_user_id, leads }),
+      }),
   },
 
   // ── Campaigns ────────────────────────────────────────────

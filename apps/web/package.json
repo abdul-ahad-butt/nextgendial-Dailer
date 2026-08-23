@@ -10,9 +10,10 @@
     "deploy": "pnpm run build && pnpm dlx wrangler pages deploy dist --project-name nextgendial-web"
   },
   "dependencies": {
+    "@telnyx/webrtc": "^2.21.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@telnyx/webrtc": "^2.21.5"
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@types/react": "^18.3.5",
