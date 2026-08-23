@@ -48,7 +48,7 @@ export type Disposition =
 
 export interface Agent {
   id: string;
-  name: string;
+  username: string;
   email: string;
   telnyx_credential_id: string | null;
   telnyx_sip_username: string | null;

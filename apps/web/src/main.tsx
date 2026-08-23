@@ -36,7 +36,7 @@ function AgentDashboardWrapper() {
   // since the real agent data will come from the backend based on the JWT
   const agent = {
     id: user.sub,
-    name: 'Agent',
+    username: 'Agent',
     email: '',
     status: 'offline'
   } as any;

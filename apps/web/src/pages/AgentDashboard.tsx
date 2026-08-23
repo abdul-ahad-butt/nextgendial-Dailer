@@ -111,10 +111,10 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: '8px 12px', border: 'none', background: 'transparent' }}
           >
             <div className="agent-avatar" aria-hidden="true">
-              {displayAgent.name.charAt(0).toUpperCase()}
+              {displayAgent.username?.charAt(0).toUpperCase() || '?'}
             </div>
             <div>
-              <div className="agent-name" style={{ fontSize: 13 }}>{displayAgent.name}</div>
+              <div className="agent-name" style={{ fontSize: 13 }}>{displayAgent.username || 'Agent'}</div>
               <div
                 className={`agent-status-badge agent-status-badge--${displayAgent.status}`}
                 style={{ marginTop: 2 }}
@@ -165,9 +165,9 @@ export function AgentDashboard({ agent, onLogout }: Props) {
           {/* Agent info */}
           <div className="agent-card">
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div className="agent-avatar">{displayAgent.name.charAt(0).toUpperCase()}</div>
+              <div className="agent-avatar">{displayAgent.username?.charAt(0).toUpperCase() || '?'}</div>
               <div>
-                <div className="agent-name">{displayAgent.name}</div>
+                <div className="agent-name">{displayAgent.username || 'Agent'}</div>
                 <div className="agent-email">{displayAgent.email}</div>
               </div>
             </div>
