@@ -18,7 +18,7 @@ import { useTelnyxClient } from '../hooks/useTelnyxClient';
 import { ActiveCallBar } from '../components/ActiveCallBar';
 import { AgentStatusToggle } from '../components/AgentStatusToggle';
 import { CallHistoryTable } from '../components/CallHistoryTable';
-import { Dialpad } from '../components/Dialpad';
+import { Dialer } from '../components/Dialer';
 import { DispositionModal } from '../components/DispositionModal';
 import { api } from '../lib/api';
 import type { Lead } from '../types';
@@ -179,10 +179,10 @@ export function AgentDashboard({ agent, onLogout }: Props) {
           {/* Divider */}
           <div style={{ height: 1, background: 'var(--border)' }} role="separator" />
 
-          {/* Dialpad */}
+          {/* Dialer */}
           <div>
             <div className="card-title">Manual Dial</div>
-            <Dialpad
+            <Dialer
               agentId={agent.id}
               onCall={handleManualCall}
               disabled={

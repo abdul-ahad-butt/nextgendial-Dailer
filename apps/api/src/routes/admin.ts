@@ -179,8 +179,53 @@ admin.delete('/batches/:id', async (c) => {
   ]);
 
   // Optionally we could return how many leads were deleted if we counted them, 
-  // but total_leads from the batch record is a good proxy.
   return c.json({ deleted_batch_id: id });
+});
+
+// GET /numbers
+admin.get('/numbers', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT p.id, p.phone_number, p.friendly_name, p.status, p.assigned_to_user_id, u.username as assigned_agent_username
+     FROM phone_numbers p
+     LEFT JOIN users u ON p.assigned_to_user_id = u.id
+     ORDER BY p.created_at DESC`
+  ).all();
+
+  return c.json({ data: results });
+});
+
+const assignNumberSchema = z.object({
+  phone_id: z.string().min(1),
+  user_id: z.string().nullable(), // null to unassign
+});
+
+// POST /numbers/assign
+admin.post('/numbers/assign', zValidator('json', assignNumberSchema), async (c) => {
+  const { phone_id, user_id } = c.req.valid('json');
+
+  const phone = await c.env.DB.prepare('SELECT phone_number FROM phone_numbers WHERE id = ?')
+    .bind(phone_id)
+    .first<{ phone_number: string }>();
+
+  if (!phone) {
+    return c.json({ error: 'Phone number not found' }, 404);
+  }
+
+  if (user_id) {
+    // Assign to new user
+    await c.env.DB.batch([
+      c.env.DB.prepare('UPDATE phone_numbers SET assigned_to_user_id = ? WHERE id = ?').bind(user_id, phone_id),
+      c.env.DB.prepare('UPDATE users SET assigned_phone_number = ? WHERE id = ?').bind(phone.phone_number, user_id),
+    ]);
+  } else {
+    // Unassign
+    await c.env.DB.batch([
+      c.env.DB.prepare('UPDATE phone_numbers SET assigned_to_user_id = NULL WHERE id = ?').bind(phone_id),
+      c.env.DB.prepare('UPDATE users SET assigned_phone_number = NULL WHERE assigned_phone_number = ?').bind(phone.phone_number),
+    ]);
+  }
+
+  return c.json({ success: true });
 });
 
 export default admin;

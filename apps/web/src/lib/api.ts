@@ -56,6 +56,11 @@ async function request<T>(
 // ── Agents ──────────────────────────────────────────────────
 
 export const api = {
+  agent: {
+    getCallerId: () =>
+      request<{ callerId: string }>('/agent/caller-id').then((r) => r.callerId),
+  },
+
   agents: {
     list: () =>
       request<{ data: Agent[] }>('/agents').then((r) => r.data),
@@ -105,6 +110,15 @@ export const api = {
     deleteBatch: (id: string) =>
       request<{ deleted_batch_id: string }>(`/admin/batches/${id}`, {
         method: 'DELETE',
+      }),
+
+    getNumbers: () =>
+      request<{ data: any[] }>('/admin/numbers').then((r) => r.data),
+
+    assignNumber: (phone_id: string, user_id: string | null) =>
+      request<{ success: boolean }>('/admin/numbers/assign', {
+        method: 'POST',
+        body: JSON.stringify({ phone_id, user_id }),
       }),
   },
 
@@ -178,5 +192,11 @@ export const api = {
 
     hangup: (id: string) =>
       request<{ success: boolean }>(`/calls/${id}/hangup`, { method: 'POST' }),
+
+    outbound: (to: string) =>
+      request<{ success: boolean; data: any }>('/calls/outbound', {
+        method: 'POST',
+        body: JSON.stringify({ to }),
+      }),
   },
 };

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import * as XLSX from 'xlsx';
+import { AdminNumbers } from './AdminNumbers';
 
 interface User {
   id: string;
@@ -20,6 +21,9 @@ interface Batch {
 export function AdminDashboard() {
   const { user, logout } = useAuth();
   
+  // Tabs State
+  const [activeTab, setActiveTab] = useState<'general' | 'numbers'>('general');
+
   // Agent State
   const [agents, setAgents] = useState<User[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(true);
@@ -169,12 +173,33 @@ export function AdminDashboard() {
           <div className="app-logo-dot" aria-hidden="true" />
           NextGenDial Admin
         </div>
+
+        <div style={{ display: 'flex', gap: 12, marginLeft: 48, flex: 1 }}>
+          <button 
+            className={`btn ${activeTab === 'general' ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setActiveTab('general')}
+          >
+            Dashboard
+          </button>
+          <button 
+            className={`btn ${activeTab === 'numbers' ? 'btn-primary' : 'btn-ghost'}`}
+            onClick={() => setActiveTab('numbers')}
+          >
+            Phone Numbers
+          </button>
+        </div>
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <button className="btn btn-ghost" onClick={logout}>Sign Out</button>
         </div>
       </header>
 
       {/* ── Main Layout ── */}
+      {activeTab === 'numbers' ? (
+        <main className="main-content" style={{ width: '100%', flex: 1, overflowY: 'auto' }}>
+          <AdminNumbers />
+        </main>
+      ) : (
       <main className="main-content" style={{ maxWidth: 1000, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 32 }}>
         
         <div>
@@ -374,6 +399,7 @@ export function AdminDashboard() {
         </div>
 
       </main>
+      )}
     </div>
   );
 }
