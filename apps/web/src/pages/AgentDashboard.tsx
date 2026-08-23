@@ -31,7 +31,7 @@ interface Props {
 export function AgentDashboard({ agent, onLogout }: Props) {
   const { agent: liveAgent, setStatus, error: statusError } = useAgentStatus(agent.id);
   const { activeCall, callContext, connectionState, mute, unmute, hangup, newCall } =
-    useTelnyxClient(agent.id);
+    useTelnyxClient(agent.id, liveAgent?.status ?? agent.status);
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [showDisposition, setShowDisposition] = useState(false);

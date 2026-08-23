@@ -34,21 +34,67 @@ agents.patch('/:id/status', zValidator('json', z.object({ status: z.string() }))
     .bind(status, id)
     .run();
     
-  return c.json({ data: { status } });
+  const user = await c.env.DB.prepare('SELECT id, username, status, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?')
+    .bind(id)
+    .first();
+    
+  return c.json({ data: user });
 });
 
 agents.post('/:id/webrtc-token', async (c) => {
   const id = c.req.param('id');
-  const user = await c.env.DB.prepare('SELECT telnyx_credential_id FROM users WHERE id = ?')
+  const user = await c.env.DB.prepare('SELECT id, username, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?')
     .bind(id)
-    .first<{ telnyx_credential_id: string }>();
+    .first<{ id: string, username: string, telnyx_credential_id: string, telnyx_sip_username: string }>();
     
-  if (!user || !user.telnyx_credential_id) {
+  if (!user) {
+    return c.json({ error: 'Agent not found' }, 404);
+  }
+
+  let credentialId = user.telnyx_credential_id;
+
+  if (!credentialId) {
+    // Attempt auto-provisioning
+    if (c.env.TELNYX_API_KEY && c.env.TELNYX_CONNECTION_ID) {
+      const sipUsername = user.telnyx_sip_username || `agent_${id.replace(/-/g, '')}`;
+      try {
+        const telnyxRes = await fetch('https://api.telnyx.com/v2/telephony_credentials', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${c.env.TELNYX_API_KEY}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            connection_id: c.env.TELNYX_CONNECTION_ID,
+            sip_username: sipUsername,
+            sip_password: crypto.randomUUID().slice(0, 16) + 'Aa1!' // Requires complexity
+          })
+        });
+        
+        if (telnyxRes.ok) {
+          const telnyxData = await telnyxRes.json() as any;
+          credentialId = telnyxData.data.id;
+          
+          // Update database with new credentials
+          await c.env.DB.prepare('UPDATE users SET telnyx_credential_id = ?, telnyx_sip_username = ? WHERE id = ?')
+            .bind(credentialId, sipUsername, id)
+            .run();
+        } else {
+          console.error('[telnyx] failed to auto-provision telephony credential:', await telnyxRes.text());
+        }
+      } catch (e) {
+        console.error('[telnyx] error auto-provisioning telephony credential:', e);
+      }
+    }
+  }
+
+  if (!credentialId) {
     return c.json({ error: 'Agent does not have a telephony credential' }, 400);
   }
   
   // Call Telnyx API to mint token
-  const res = await fetch(`https://api.telnyx.com/v2/telephony_credentials/${user.telnyx_credential_id}/token`, {
+  const res = await fetch(`https://api.telnyx.com/v2/telephony_credentials/${credentialId}/token`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${c.env.TELNYX_API_KEY}`,

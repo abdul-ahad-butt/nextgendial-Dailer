@@ -31,7 +31,7 @@ interface UseTelnyxClientResult {
   newCall: (destinationNumber: string, callerNumber?: string) => void;
 }
 
-export function useTelnyxClient(agentId: string | null): UseTelnyxClientResult {
+export function useTelnyxClient(agentId: string | null, agentStatus?: string): UseTelnyxClientResult {
   const clientRef = useRef<TelnyxRTC | null>(null);
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [callContext, setCallContext] = useState<CallLog | null>(null);
@@ -139,14 +139,25 @@ export function useTelnyxClient(agentId: string | null): UseTelnyxClientResult {
   // ── Mount / agentId change ─────────────────────────────────
 
   useEffect(() => {
-    if (!agentId) return;
-    connectClient(agentId);
+    if (!agentId || !agentStatus) return;
+
+    if (agentStatus === 'offline' || agentStatus === 'break') {
+      if (clientRef.current) {
+        clientRef.current.disconnect();
+        clientRef.current = null;
+        setConnectionState('idle');
+      }
+    } else {
+      if (!clientRef.current) {
+        connectClient(agentId);
+      }
+    }
 
     return () => {
-      clientRef.current?.disconnect();
-      clientRef.current = null;
+      // We don't cleanup on unmount unless agentId actually changes/unmounts
+      // The dependency array handles the status logic
     };
-  }, [agentId, connectClient]);
+  }, [agentId, agentStatus, connectClient]);
 
   // ── Controls ───────────────────────────────────────────────
 
