@@ -160,7 +160,7 @@ export const api = {
       return request<PaginatedResponse<Lead>>(`/leads?${qs}`);
     },
     updateStatus: (id: string, status: string) =>
-      request<{ data: Lead }>(`/leads/${id}`, {
+      request<{ data: Lead }>(`/leads/${id}/status`, {
         method: 'PATCH',
         body: JSON.stringify({ status }),
       }).then((r) => r.data),

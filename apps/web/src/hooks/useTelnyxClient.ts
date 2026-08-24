@@ -82,8 +82,11 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
         setConnectionState('ready');
       });
 
-      client.on('telnyx.error', (err: unknown) => {
+      client.on('telnyx.error', (err: any) => {
         console.error('[webrtc] telnyx.error:', err);
+        if (err?.code === -32002 || err?.error?.includes('BYE_SEND_FAILED') || err?.message?.includes('CALL DOES NOT EXIST')) {
+          return; // Ignore call already ended errors
+        }
         setConnectionState('error');
       });
 
@@ -232,7 +235,11 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
   }, [activeCall]);
 
   const hangup = useCallback(() => {
-    activeCall?.sdkCall?.hangup?.();
+    try {
+      activeCall?.sdkCall?.hangup?.();
+    } catch (e) {
+      console.warn('[webrtc] hangup error ignored:', e);
+    }
     setActiveCall(null);
     setCallContext(null);
   }, [activeCall]);

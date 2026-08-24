@@ -76,20 +76,56 @@ calls.post('/manual', zValidator('json', manualCallSchema), async (c) => {
   const now = new Date().toISOString();
   const direction = body.direction || 'outbound';
   
-  await c.env.DB.prepare(`
-    INSERT INTO call_logs (id, agent_id, lead_id, campaign_id, telnyx_call_control_id, direction, status, start_time, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'ringing', ?, ?)
-  `)
-  .bind(
-    id,
-    body.agentId,
-    body.leadId || null,
-    body.campaignId || null,
-    body.telnyx_call_control_id || null,
-    direction,
-    now,
-    now
-  ).run();
+  try {
+    const user = await c.env.DB.prepare('SELECT username FROM users WHERE id = ?').bind(body.agentId).first<{ username: string }>();
+    if (user) {
+      await c.env.DB.prepare(`
+        INSERT INTO agents (id, name, email) 
+        VALUES (?, ?, ?) 
+        ON CONFLICT(id) DO NOTHING
+      `).bind(body.agentId, user.username, `${user.username}@system.local`).run();
+    }
+  } catch(e) {}
+  
+  if (body.leadId) {
+    const lead = await c.env.DB.prepare('SELECT id FROM leads WHERE id = ?').bind(body.leadId).first();
+    if (!lead) {
+      body.leadId = undefined;
+    }
+  }
+
+  try {
+    await c.env.DB.prepare(`
+      INSERT INTO call_logs (id, agent_id, lead_id, campaign_id, telnyx_call_control_id, direction, status, start_time, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'ringing', ?, ?)
+    `)
+    .bind(
+      id,
+      body.agentId,
+      body.leadId || null,
+      body.campaignId || null,
+      body.telnyx_call_control_id || null,
+      direction,
+      now,
+      now
+    ).run();
+  } catch (error: any) {
+    if (error.message && error.message.includes('FOREIGN KEY constraint failed')) {
+      await c.env.DB.prepare(`
+        INSERT INTO call_logs (id, agent_id, lead_id, campaign_id, telnyx_call_control_id, direction, status, start_time, created_at)
+        VALUES (?, NULL, NULL, NULL, ?, ?, 'ringing', ?, ?)
+      `)
+      .bind(
+        id,
+        body.telnyx_call_control_id || null,
+        direction,
+        now,
+        now
+      ).run();
+    } else {
+      throw error;
+    }
+  }
   
   const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
   return c.json({ data: callLog });
