@@ -24,6 +24,7 @@ export function Login() {
       const data = await response.json();
 
       if (!response.ok) {
+        console.error('Login Error Detail:', data);
         throw new Error(data.error || 'Login failed');
       }
 

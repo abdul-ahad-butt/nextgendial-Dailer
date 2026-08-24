@@ -48,72 +48,20 @@ function hexToBuffer(hex: string): ArrayBuffer {
 
 // ── Password Hashing ──────────────────────────────────────────
 
-const PBKDF2_ITERATIONS = 100000;
-const PBKDF2_KEY_LENGTH_BYTES = 32; // 256 bits
-
-export async function hashPassword(password: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const encoder = new TextEncoder();
-
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    { name: 'PBKDF2' },
-    false,
-    ['deriveBits']
-  );
-
-  const hashBuffer = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      salt: salt,
-      iterations: PBKDF2_ITERATIONS,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    PBKDF2_KEY_LENGTH_BYTES * 8 // in bits
-  );
-
-  const saltHex = bufferToHex(salt.buffer);
-  const hashHex = bufferToHex(hashBuffer);
-
-  return `${saltHex}:${hashHex}`;
+export async function hashPassword(pwd: string): Promise<string> {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [saltHex, storedHashHex] = stored.split(':');
-  if (!saltHex || !storedHashHex) return false;
-
-  const saltBuffer = hexToBuffer(saltHex);
-  const encoder = new TextEncoder();
-
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    { name: 'PBKDF2' },
-    false,
-    ['deriveBits']
-  );
-
-  const hashBuffer = await crypto.subtle.deriveBits(
-    {
-      name: 'PBKDF2',
-      salt: saltBuffer,
-      iterations: PBKDF2_ITERATIONS,
-      hash: 'SHA-256',
-    },
-    keyMaterial,
-    PBKDF2_KEY_LENGTH_BYTES * 8
-  );
-
-  const newHashHex = bufferToHex(hashBuffer);
-
+  const newHash = await hashPassword(password);
+  
   // Timing safe comparison approximation for hex strings
-  if (newHashHex.length !== storedHashHex.length) return false;
+  if (newHash.length !== stored.length) return false;
   
   let mismatch = 0;
-  for (let i = 0; i < newHashHex.length; i++) {
-    mismatch |= newHashHex.charCodeAt(i) ^ storedHashHex.charCodeAt(i);
+  for (let i = 0; i < newHash.length; i++) {
+    mismatch |= newHash.charCodeAt(i) ^ stored.charCodeAt(i);
   }
   return mismatch === 0;
 }
