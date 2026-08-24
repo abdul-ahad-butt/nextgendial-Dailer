@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import * as XLSX from 'xlsx';
@@ -16,34 +17,15 @@ interface Batch {
   total_leads: number;
   uploaded_at: string;
   assigned_agent_username: string | null;
+  dialed_count: number;
+  completed_count: number;
+  pending_count: number;
 }
 
-function LiveDuration({ changedAt, status }: { changedAt: string | null; status: string }) {
-  const [now, setNow] = useState(Date.now());
-  
-  useEffect(() => {
-    // Update every second to keep the timer live
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, []);
 
-  if (!changedAt) return null;
-
-  const changedTime = new Date(changedAt).getTime();
-  const elapsedMs = Math.max(0, now - changedTime);
-  
-  if (status === 'on_call') {
-    const totalSeconds = Math.floor(elapsedMs / 1000);
-    const mins = Math.floor(totalSeconds / 60);
-    const secs = totalSeconds % 60;
-    return <span>{mins}:{secs.toString().padStart(2, '0')}</span>;
-  } else {
-    const elapsedMins = Math.floor(elapsedMs / 60000);
-    return <span>{elapsedMins} min</span>;
-  }
-}
 
 export function AdminDashboard() {
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
   
   // Tabs State
@@ -51,7 +33,7 @@ export function AdminDashboard() {
 
   // Agent State
   const [agents, setAgents] = useState<User[]>([]);
-  const [agentStatuses, setAgentStatuses] = useState<any[]>([]);
+  const [workSummary, setWorkSummary] = useState<any[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(true);
   
   // Create Agent State
@@ -80,10 +62,13 @@ export function AdminDashboard() {
 
   useEffect(() => {
     fetchAgents();
-    fetchAgentStatuses();
+    fetchWorkSummary();
     fetchBatches();
     
-    const interval = setInterval(fetchAgentStatuses, 5000);
+    const interval = setInterval(() => {
+      fetchWorkSummary();
+      fetchBatches();
+    }, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -99,12 +84,12 @@ export function AdminDashboard() {
     }
   };
 
-  const fetchAgentStatuses = async () => {
+  const fetchWorkSummary = async () => {
     try {
-      const data = await api.admin.getAgentStatus();
-      setAgentStatuses(data);
+      const data = await api.admin.getWorkSummary();
+      setWorkSummary(data);
     } catch (err) {
-      console.error('Failed to load agent statuses', err);
+      console.error('Failed to load work summary', err);
     }
   };
 
@@ -258,6 +243,12 @@ export function AdminDashboard() {
           >
             Phone Numbers
           </button>
+          <button 
+            className={`btn btn-ghost`}
+            onClick={() => navigate('/admin/recordings')}
+          >
+            Call Recordings
+          </button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -325,29 +316,30 @@ export function AdminDashboard() {
           </div>
 
           <div className="card" style={{ padding: 24 }}>
-            <h2 style={{ fontSize: 18, marginBottom: 16 }}>Existing Agents</h2>
+            <h2 style={{ fontSize: 18, marginBottom: 16 }}>Agent Work Summary</h2>
             {loadingAgents ? (
               <span className="spinner" />
-            ) : agentStatuses.length === 0 ? (
+            ) : workSummary.length === 0 ? (
               <p className="text-muted text-sm">No agents found.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {agentStatuses.map(a => {
+                {workSummary.map(a => {
                   const status = a.status || 'offline';
                   
                   return (
-                    <div key={a.user_id} style={{ padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div key={a.agent_id} style={{ padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <div style={{ fontWeight: 600 }}>{a.username}</div>
-                        <div className="text-muted text-sm" style={{ fontFamily: 'var(--font-mono)' }}>{a.user_id.slice(0, 8)}...</div>
+                        <div className="text-muted text-sm" style={{ fontFamily: 'var(--font-mono)' }}>{a.agent_id.slice(0, 8)}...</div>
+                        <div className="text-muted text-xs" style={{ marginTop: 4 }}>
+                          Calls: {a.total_calls_made} | Talk: {Math.floor(a.total_talk_time_seconds / 60)}m {a.total_talk_time_seconds % 60}s | 
+                          Active: {Math.floor(a.total_active_seconds / 60)}m | Break: {Math.floor(a.total_break_seconds / 60)}m
+                        </div>
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                         <div className={`agent-status-badge agent-status-badge--${status}`} style={{ fontSize: 12, padding: '2px 8px' }}>
                           <span className={`status-dot status-dot--${status}`} />
                           {status.replace('_', ' ')}
-                        </div>
-                        <div className="text-muted text-xs">
-                          <LiveDuration changedAt={a.changed_at} status={status} />
                         </div>
                       </div>
                     </div>
@@ -484,7 +476,15 @@ export function AdminDashboard() {
                     <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
                       {new Date(b.uploaded_at).toLocaleString()}
                     </td>
-                    <td style={{ padding: '12px 8px' }}>{b.total_leads}</td>
+                    <td style={{ padding: '12px 8px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div>{b.dialed_count} / {b.total_leads} Dialed</div>
+                        <div style={{ height: 6, width: '100%', background: 'var(--surface-hover)', borderRadius: 3, overflow: 'hidden' }}>
+                           <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, (b.dialed_count / (b.total_leads || 1)) * 100))}%`, background: 'var(--primary)' }} />
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{b.completed_count} Completed, {b.pending_count} Pending</div>
+                      </div>
+                    </td>
                     <td style={{ padding: '12px 8px' }}>
                       {b.assigned_agent_username ? (
                         <span style={{ padding: '2px 8px', background: 'var(--primary-dim)', color: 'var(--primary)', borderRadius: 12, fontSize: 12, fontWeight: 500 }}>

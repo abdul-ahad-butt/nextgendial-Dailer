@@ -30,9 +30,42 @@ agents.patch('/:id/status', zValidator('json', z.object({ status: z.string() }))
   const id = c.req.param('id');
   const { status } = c.req.valid('json');
   
-  await c.env.DB.prepare('UPDATE users SET status = ? WHERE id = ?')
-    .bind(status, id)
-    .run();
+  // Calculate time spent in previous state if agent_status exists
+  const previousStatusRow = await c.env.DB.prepare('SELECT status, changed_at FROM agent_status WHERE user_id = ?').bind(id).first<{ status: string, changed_at: string }>();
+  
+  if (previousStatusRow && previousStatusRow.changed_at) {
+    const changedAtMs = new Date(previousStatusRow.changed_at).getTime();
+    const nowMs = Date.now();
+    const diffSeconds = Math.max(0, Math.floor((nowMs - changedAtMs) / 1000));
+    
+    // Ensure an activity log row exists for today
+    await c.env.DB.prepare(`
+      INSERT INTO agent_activity_logs (id, agent_id, date) 
+      VALUES (?, ?, date('now'))
+      ON CONFLICT(agent_id, date) DO NOTHING
+    `).bind(crypto.randomUUID(), id).run();
+
+    if (['available', 'dialing', 'on_call', 'wrap_up'].includes(previousStatusRow.status)) {
+      await c.env.DB.prepare(`
+        UPDATE agent_activity_logs SET total_active_seconds = total_active_seconds + ? 
+        WHERE agent_id = ? AND date = date('now')
+      `).bind(diffSeconds, id).run();
+    } else if (previousStatusRow.status === 'break') {
+      await c.env.DB.prepare(`
+        UPDATE agent_activity_logs SET total_break_seconds = total_break_seconds + ? 
+        WHERE agent_id = ? AND date = date('now')
+      `).bind(diffSeconds, id).run();
+    }
+  }
+
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET status = ? WHERE id = ?').bind(status, id),
+    c.env.DB.prepare(`
+      INSERT INTO agent_status (user_id, status, changed_at) 
+      VALUES (?, ?, datetime('now')) 
+      ON CONFLICT(user_id) DO UPDATE SET status = ?, changed_at = datetime('now')
+    `).bind(id, status, status)
+  ]);
     
   const user = await c.env.DB.prepare('SELECT id, username, status, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?')
     .bind(id)

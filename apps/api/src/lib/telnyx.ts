@@ -62,6 +62,7 @@ export interface DialOptions {
   webhookUrl: string;
   clientState: string; // base64-encoded
   answeringMachineDetection?: 'premium' | 'disabled';
+  record?: 'record-from-answer';
 }
 
 /**
@@ -79,6 +80,9 @@ export async function dialNumber(env: Env, opts: DialOptions): Promise<string> {
 
   if (opts.answeringMachineDetection && opts.answeringMachineDetection !== 'disabled') {
     body['answering_machine_detection'] = opts.answeringMachineDetection;
+  }
+  if (opts.record) {
+    body['record'] = opts.record;
   }
 
   const response = (await telnyxRequest(env, '/calls', 'POST', body)) as {

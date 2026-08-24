@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './pages/Login';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { AdminRecordings } from './pages/AdminRecordings';
 import { AgentDashboard } from './pages/AgentDashboard';
 
 // Root redirect handler
@@ -52,6 +53,7 @@ function App() {
           <Route path="/login" element={<Login />} />
           
           <Route element={<ProtectedRoute allowedRole="admin" />}>
+            <Route path="/admin/recordings" element={<AdminRecordings />} />
             <Route path="/admin/*" element={<AdminDashboard />} />
           </Route>
           

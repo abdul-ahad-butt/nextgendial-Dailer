@@ -197,9 +197,19 @@ admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => 
 
 admin.get('/leads/batches', async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT lb.id, lb.file_name, lb.total_leads, lb.uploaded_at, u.username as assigned_agent_username
+    `SELECT 
+       lb.id, 
+       lb.file_name, 
+       lb.total_leads, 
+       lb.uploaded_at, 
+       u.username as assigned_agent_username,
+       SUM(CASE WHEN l.status != 'pending' THEN 1 ELSE 0 END) as dialed_count,
+       SUM(CASE WHEN l.status = 'completed' THEN 1 ELSE 0 END) as completed_count,
+       SUM(CASE WHEN l.status = 'pending' THEN 1 ELSE 0 END) as pending_count
      FROM lead_batches lb
      LEFT JOIN users u ON lb.assigned_user_id = u.id
+     LEFT JOIN leads l ON lb.id = l.batch_id
+     GROUP BY lb.id
      ORDER BY lb.uploaded_at DESC`
   ).all();
 
@@ -318,6 +328,33 @@ admin.get('/agent-status', async (c) => {
     ORDER BY u.created_at DESC
   `).all();
 
+  return c.json({ data: results });
+});
+
+admin.get('/agents/work-summary', async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT 
+       u.id as agent_id,
+       u.username,
+       COALESCE(a.status, 'offline') as status,
+       COALESCE(al.total_active_seconds, 0) as total_active_seconds,
+       COALESCE(al.total_break_seconds, 0) as total_break_seconds,
+       COALESCE(al.total_calls_made, 0) as total_calls_made,
+       COALESCE(al.total_talk_time_seconds, 0) as total_talk_time_seconds
+     FROM users u
+     LEFT JOIN agent_status a ON u.id = a.user_id
+     LEFT JOIN agent_activity_logs al ON u.id = al.agent_id AND al.date = date('now')
+     WHERE u.role = 'agent'`
+  ).all();
+
+  return c.json({ data: results });
+});
+
+admin.get('/call-recordings', async (c) => {
+  // basic implementation, can expand to support query params if needed
+  const { results } = await c.env.DB.prepare(
+    `SELECT * FROM call_recordings ORDER BY created_at DESC LIMIT 100`
+  ).all();
   return c.json({ data: results });
 });
 

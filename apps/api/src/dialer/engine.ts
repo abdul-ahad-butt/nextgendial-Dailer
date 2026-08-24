@@ -119,6 +119,7 @@ export async function tryDialNextLead(env: Env, agentId: string): Promise<void> 
       webhookUrl: `${env.APP_BASE_URL}/api/webhooks/telnyx`,
       clientState,
       answeringMachineDetection: 'premium',
+      record: 'record-from-answer',
     });
 
     // Step 6: Store the call_control_id on the call log
@@ -366,6 +367,20 @@ async function handleCallHangup(
     // Agent goes to wrap_up — must submit disposition before re-entering the loop
     if (callLog.agent_id) {
       await updateAgentStatus(env.DB, callLog.agent_id, 'wrap_up');
+      
+      // Update agent activity logs
+      await env.DB.prepare(`
+        INSERT INTO agent_activity_logs (id, agent_id, date) 
+        VALUES (?, ?, date('now'))
+        ON CONFLICT(agent_id, date) DO NOTHING
+      `).bind(crypto.randomUUID(), callLog.agent_id).run();
+      
+      await env.DB.prepare(`
+        UPDATE agent_activity_logs 
+        SET total_calls_made = total_calls_made + 1,
+            total_talk_time_seconds = total_talk_time_seconds + ?
+        WHERE agent_id = ? AND date = date('now')
+      `).bind(duration ?? 0, callLog.agent_id).run();
     }
 
     console.log(`[dialer] Call ${callLog.id} completed — agent ${callLog.agent_id} in wrap_up`);

@@ -108,6 +108,12 @@ export const api = {
     getAgentStatus: () =>
       request<{ data: any[] }>('/admin/agent-status').then((r) => r.data),
 
+    getWorkSummary: () =>
+      request<{ data: any[] }>('/admin/agents/work-summary').then((r) => r.data),
+
+    getCallRecordings: () =>
+      request<{ data: any[] }>('/admin/call-recordings').then((r) => r.data),
+
     createAgent: (data: { username: string; password: string }) =>
       request<{ data: any }>('/admin/agents', {
         method: 'POST',
