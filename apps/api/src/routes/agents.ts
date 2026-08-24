@@ -55,10 +55,13 @@ agents.post('/:id/webrtc-token', async (c) => {
 
   if (!credentialId) {
     // Attempt auto-provisioning
-    if (!c.env.TELNYX_API_KEY) {
+    const rawApiKey = c.env.TELNYX_API_KEY;
+    if (!rawApiKey) {
       console.warn('[telnyx] Missing TELNYX_API_KEY in Cloudflare Worker secrets');
       return c.json({ error: 'MISSING_TELNYX_CREDENTIALS', status: 400 }, 200);
     }
+    const apiKey = rawApiKey.trim().replace(/^["']|["']$/g, '');
+
     if (!c.env.TELNYX_CONNECTION_ID) {
       console.warn('[telnyx] Missing TELNYX_CONNECTION_ID in Cloudflare Worker secrets');
       return c.json({ error: 'MISSING_TELNYX_CREDENTIALS', status: 400 }, 200);
@@ -69,7 +72,7 @@ agents.post('/:id/webrtc-token', async (c) => {
       const telnyxRes = await fetch('https://api.telnyx.com/v2/telephony_credentials', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${c.env.TELNYX_API_KEY}`,
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
@@ -91,11 +94,15 @@ agents.post('/:id/webrtc-token', async (c) => {
       } else {
         const errText = await telnyxRes.text();
         console.error('[telnyx] failed to auto-provision telephony credential:', errText);
-        return c.json({ error: `Telnyx auto-provisioning failed: ${errText}` }, 400);
+        
+        if (errText.includes('malformed') || errText.includes('Authentication failed')) {
+          return c.json({ error: 'INVALID_TELNYX_API_KEY', status: 400 }, 200);
+        }
+        return c.json({ error: `Telnyx auto-provisioning failed: ${errText}`, status: 400 }, 200);
       }
     } catch (e) {
       console.error('[telnyx] error auto-provisioning telephony credential:', e);
-      return c.json({ error: 'Failed to contact Telnyx for auto-provisioning' }, 500);
+      return c.json({ error: 'Failed to contact Telnyx for auto-provisioning', status: 500 }, 200);
     }
   }
 
@@ -103,11 +110,17 @@ agents.post('/:id/webrtc-token', async (c) => {
     return c.json({ error: 'Agent does not have a telephony credential' }, 400);
   }
   
+  const rawApiKey = c.env.TELNYX_API_KEY;
+  if (!rawApiKey) {
+    return c.json({ error: 'MISSING_TELNYX_CREDENTIALS', status: 400 }, 200);
+  }
+  const apiKey = rawApiKey.trim().replace(/^["']|["']$/g, '');
+
   // Call Telnyx API to mint token
   const res = await fetch(`https://api.telnyx.com/v2/telephony_credentials/${credentialId}/token`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${c.env.TELNYX_API_KEY}`,
+      'Authorization': `Bearer ${apiKey}`,
       'Accept': 'application/json'
     }
   });
@@ -115,7 +128,10 @@ agents.post('/:id/webrtc-token', async (c) => {
   if (!res.ok) {
     const errorText = await res.text();
     console.error('[telnyx] failed to generate token:', errorText);
-    return c.json({ error: 'Failed to generate WebRTC token' }, 500);
+    if (errorText.includes('malformed') || errorText.includes('Authentication failed')) {
+      return c.json({ error: 'INVALID_TELNYX_API_KEY', status: 400 }, 200);
+    }
+    return c.json({ error: 'Failed to generate WebRTC token', status: 500 }, 200);
   }
   
   const telnyxData = await res.json() as any;

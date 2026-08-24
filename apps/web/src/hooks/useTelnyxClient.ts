@@ -53,6 +53,18 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
         return;
       }
 
+      if (res.error === 'INVALID_TELNYX_API_KEY') {
+        console.error('[webrtc] connectClient error: The API key looks malformed. Check that you copied it correctly.');
+        setConnectionState('error');
+        return;
+      }
+
+      if (res.error) {
+        console.error('[webrtc] connectClient error:', res.error);
+        setConnectionState('error');
+        return;
+      }
+
       const token = res.token;
       if (!token) throw new Error('No WebRTC token returned');
 
