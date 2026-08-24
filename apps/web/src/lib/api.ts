@@ -65,6 +65,13 @@ export const api = {
   agent: {
     getCallerId: () =>
       request<{ callerId: string }>('/agent/caller-id').then((r) => r.callerId),
+    status: () =>
+      request<{ status: AgentStatus; changed_at: string }>('/agent/status'),
+    setStatus: (status: AgentStatus) =>
+      request<{ success: boolean; status: AgentStatus }>('/agent/status', {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }),
   },
 
   agents: {
@@ -97,6 +104,9 @@ export const api = {
   admin: {
     getAgents: () =>
       request<{ data: any[] }>('/admin/users').then((r) => r.data),
+
+    getAgentStatus: () =>
+      request<{ data: any[] }>('/admin/agent-status').then((r) => r.data),
 
     createAgent: (data: { username: string; password: string }) =>
       request<{ data: any }>('/admin/users', {
@@ -149,6 +159,11 @@ export const api = {
       if (params?.limit) qs.set('limit', String(params.limit));
       return request<PaginatedResponse<Lead>>(`/leads?${qs}`);
     },
+    updateStatus: (id: string, status: string) =>
+      request<{ data: Lead }>(`/leads/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      }).then((r) => r.data),
   },
 
   // ── Calls ────────────────────────────────────────────────
@@ -190,6 +205,7 @@ export const api = {
       leadId?: string;
       campaignId?: string;
       telnyx_call_control_id?: string;
+      direction?: 'outbound' | 'inbound';
     }) =>
       request<{ data: CallLog }>('/calls/manual', {
         method: 'POST',
@@ -204,5 +220,11 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ to }),
       }),
+      
+    update: (id: string, data: { status?: string; end_time?: string; duration?: number }) =>
+      request<{ data: CallLog }>(`/calls/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }).then((r) => r.data),
   },
 };

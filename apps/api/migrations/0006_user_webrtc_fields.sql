@@ -1,3 +1,3 @@
-ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'offline';  
-ALTER TABLE users ADD COLUMN telnyx_credential_id TEXT;  
-ALTER TABLE users ADD COLUMN telnyx_sip_username TEXT; 
+-- ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'offline';  
+-- ALTER TABLE users ADD COLUMN telnyx_credential_id TEXT;  
+-- ALTER TABLE users ADD COLUMN telnyx_sip_username TEXT; 

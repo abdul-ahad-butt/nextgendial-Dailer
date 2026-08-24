@@ -29,9 +29,9 @@ interface Props {
 }
 
 export function AgentDashboard({ agent, onLogout }: Props) {
-  const { agent: liveAgent, setStatus, error: statusError } = useAgentStatus(agent.id);
-  const { activeCall, callContext, connectionState, mute, unmute, hangup, newCall, retryConnection } =
-    useTelnyxClient(agent.id, liveAgent?.status ?? agent.status);
+  const { currentStatus, changedAt, setStatus, error: statusError } = useAgentStatus();
+  const { activeCall, callContext, connectionState, mute, unmute, hangup, answer, reject, newCall, retryConnection } =
+    useTelnyxClient(agent.id, currentStatus);
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [showDisposition, setShowDisposition] = useState(false);
@@ -54,10 +54,10 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
   // Show disposition modal when agent enters wrap_up
   useEffect(() => {
-    if (liveAgent?.status === 'wrap_up') {
+    if (currentStatus === 'wrap_up') {
       setShowDisposition(true);
     }
-  }, [liveAgent?.status]);
+  }, [currentStatus]);
 
   const currentScript =
     callContext?.campaign_id
@@ -66,12 +66,20 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
   const handleManualCall = useCallback(
     async (number: string, leadId?: string) => {
-      newCall(number);
-      // Log the manual call — we don't have call_control_id yet at this point,
-      // the frontend can update it once the SDK call object is available.
-      await api.calls
+      // 1. Log the manual call to create the call_logs row
+      const logRes = await api.calls
         .logManual({ agentId: agent.id, phoneNumber: number, leadId })
         .catch(console.error);
+
+      // 2. Initiate the call with the returned callLogId
+      const callLogId = logRes?.id ?? null;
+      newCall(number, '', callLogId, leadId || null);
+
+      // 3. Update the lead status to 'calling'
+      if (leadId) {
+        await api.leads.updateStatus(leadId, 'calling').catch(console.error);
+        fetchLeads();
+      }
     },
     [agent.id, newCall],
   );
@@ -81,7 +89,42 @@ export function AgentDashboard({ agent, onLogout }: Props) {
     fetchLeads(); // Refresh leads in case one was completed
   }, []);
 
-  const displayAgent = liveAgent ?? agent;
+  // Auto-dialer loop
+  useEffect(() => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    
+    if (connectionState === 'ready' && currentStatus === 'available' && !activeCall) {
+      timeoutId = setTimeout(async () => {
+        try {
+          // fetch next pending lead
+          const res = await api.leads.list({ status: 'pending', limit: 1 });
+          const nextLead = res.data[0];
+          
+          if (nextLead && nextLead.phone_number) {
+            // initiate call
+            const logRes = await api.calls.logManual({
+              agentId: agent.id,
+              phoneNumber: nextLead.phone_number,
+              leadId: nextLead.id,
+              direction: 'outbound'
+            });
+            
+            newCall(nextLead.phone_number, '', logRes.id, nextLead.id);
+            await api.leads.updateStatus(nextLead.id, 'calling');
+            fetchLeads();
+          }
+        } catch (error) {
+          console.error('Auto-dialer error:', error);
+        }
+      }, 3000);
+    }
+    
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [connectionState, currentStatus, activeCall, agent.id, newCall]);
+
+  const displayAgent = agent;
 
   return (
     <div className="app-layout">
@@ -126,13 +169,13 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             <div>
               <div className="agent-name" style={{ fontSize: 13 }}>{displayAgent.username || 'Agent'}</div>
               <div
-                className={`agent-status-badge agent-status-badge--${displayAgent.status}`}
+                className={`agent-status-badge agent-status-badge--${currentStatus}`}
                 style={{ marginTop: 2 }}
                 role="status"
                 aria-live="polite"
               >
-                <span className={`status-dot status-dot--${displayAgent.status}`} aria-hidden="true" />
-                {displayAgent.status.replace('_', ' ')}
+                <span className={`status-dot status-dot--${currentStatus}`} aria-hidden="true" />
+                {currentStatus.replace('_', ' ')}
               </div>
             </div>
           </div>
@@ -149,7 +192,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
       </header>
 
       {/* ── Active Call Bar (sticky) ── */}
-      {(activeCall || displayAgent.status === 'wrap_up' || displayAgent.status === 'on_call') && (
+      {(activeCall || currentStatus === 'wrap_up' || currentStatus === 'on_call') && (
         <ActiveCallBar
           agent={displayAgent}
           activeCall={activeCall}
@@ -158,6 +201,8 @@ export function AgentDashboard({ agent, onLogout }: Props) {
           onMute={mute}
           onUnmute={unmute}
           onHangup={hangup}
+          onAnswer={answer}
+          onReject={reject}
         />
       )}
 
@@ -184,7 +229,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
           </div>
 
           {/* Status toggle */}
-          <AgentStatusToggle agent={displayAgent} onSetStatus={setStatus} />
+          <AgentStatusToggle status={currentStatus} changedAt={changedAt} onSetStatus={setStatus} />
 
           {/* Divider */}
           <div style={{ height: 1, background: 'var(--border)' }} role="separator" />
@@ -196,9 +241,9 @@ export function AgentDashboard({ agent, onLogout }: Props) {
               onCall={handleManualCall}
               disabled={
                 connectionState !== 'ready' ||
-                displayAgent.status === 'on_call' ||
-                displayAgent.status === 'dialing' ||
-                displayAgent.status === 'wrap_up'
+                currentStatus === 'on_call' ||
+                currentStatus === 'dialing' ||
+                currentStatus === 'wrap_up'
               }
             />
           </div>

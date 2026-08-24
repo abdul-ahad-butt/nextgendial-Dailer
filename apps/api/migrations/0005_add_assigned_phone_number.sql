@@ -1,1 +1,1 @@
-ALTER TABLE users ADD COLUMN assigned_phone_number TEXT;
+-- ALTER TABLE users ADD COLUMN assigned_phone_number TEXT;

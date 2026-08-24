@@ -20,6 +20,8 @@ interface Props {
   onMute: () => void;
   onUnmute: () => void;
   onHangup: () => void;
+  onAnswer: () => void;
+  onReject: () => void;
 }
 
 export function ActiveCallBar({
@@ -30,31 +32,34 @@ export function ActiveCallBar({
   onMute,
   onUnmute,
   onHangup,
+  onAnswer,
+  onReject,
 }: Props) {
   const isWrapUp = agent.status === 'wrap_up' && !activeCall;
   const isOnCall = !!activeCall;
+  const isRinging = activeCall?.sdkCall?.state === 'ringing' && callContext?.direction === 'inbound';
 
   if (!isOnCall && !isWrapUp) return null;
 
   return (
     <div
-      className={`active-call-bar${isWrapUp ? ' active-call-bar--wrap-up' : ''}`}
+      className={`active-call-bar${isWrapUp ? ' active-call-bar--wrap-up' : ''}${isRinging ? ' active-call-bar--ringing' : ''}`}
       role="region"
-      aria-label={isWrapUp ? 'Wrap-up — submit disposition' : 'Active call controls'}
+      aria-label={isWrapUp ? 'Wrap-up — submit disposition' : isRinging ? 'Incoming call' : 'Active call controls'}
       aria-live="polite"
     >
       <div
-        className={`call-bar-indicator${isWrapUp ? ' call-bar-indicator--wrap-up' : ''}`}
+        className={`call-bar-indicator${isWrapUp ? ' call-bar-indicator--wrap-up' : ''}${isRinging ? ' call-bar-indicator--ringing' : ''}`}
         aria-hidden="true"
       />
 
-      <CallInfo callContext={callContext} isWrapUp={isWrapUp} />
+      <CallInfo callContext={callContext} isWrapUp={isWrapUp} isRinging={isRinging} activeCall={activeCall} />
 
-      {script && <ScriptPanel script={script} />}
+      {script && !isRinging && <ScriptPanel script={script} />}
 
-      <CallTimer started={callContext?.started_at ?? null} isWrapUp={isWrapUp} />
+      {!isRinging && <CallTimer started={callContext?.started_at ?? null} isWrapUp={isWrapUp} />}
 
-      {isOnCall && activeCall && (
+      {isOnCall && activeCall && !isRinging && (
         <div className="call-bar-actions">
           <MuteButton
             isMuted={activeCall.isMuted}
@@ -68,10 +73,27 @@ export function ActiveCallBar({
             title="Hang up (future: Escape key)"
             onClick={onHangup}
           >
-            {/* Phone hang-up icon */}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.01L6.6 10.8z" />
             </svg>
+          </button>
+        </div>
+      )}
+
+      {isRinging && (
+        <div className="call-bar-actions" style={{ marginLeft: 'auto' }}>
+          <button
+            className="btn btn-primary"
+            style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
+            onClick={onAnswer}
+          >
+            Accept
+          </button>
+          <button
+            className="btn btn-danger"
+            onClick={onReject}
+          >
+            Reject
           </button>
         </div>
       )}
@@ -93,21 +115,26 @@ export function ActiveCallBar({
 function CallInfo({
   callContext,
   isWrapUp,
+  isRinging,
+  activeCall,
 }: {
   callContext: CallLog | null;
   isWrapUp: boolean;
+  isRinging?: boolean;
+  activeCall?: ActiveCall | null;
 }) {
-  // We don't have a direct join to lead name here — that would require a
-  // second fetch. In a real app you'd include lead_name in the call log
-  // response. For now we show the call log ID and a "Live" label.
+  const remoteNumber = activeCall?.sdkCall?.options?.remoteCallerNumber 
+    || activeCall?.sdkCall?.options?.remoteCallerName 
+    || 'Unknown';
+
   return (
     <div className="call-bar-info">
       <div className="call-bar-name">
-        {isWrapUp ? 'Call Ended' : 'Live Call'}
+        {isWrapUp ? 'Call Ended' : isRinging ? 'Incoming Call' : 'Live Call'}
       </div>
       <div className="call-bar-detail">
         {callContext
-          ? `Call ID: ${callContext.id.slice(0, 8)}…`
+          ? (isRinging && callContext.direction === 'inbound' ? `From: ${remoteNumber}` : `Call ID: ${callContext.id.slice(0, 8)}…`)
           : 'Connecting…'}
       </div>
     </div>

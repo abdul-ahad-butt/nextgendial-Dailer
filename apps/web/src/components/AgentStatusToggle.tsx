@@ -6,10 +6,12 @@
  * Server is the source of truth — this reflects polled agent.status.
  */
 
-import type { Agent, AgentStatus } from '../types';
+import { useEffect, useState } from 'react';
+import type { AgentStatus } from '../types';
 
 interface Props {
-  agent: Agent | null;
+  status: AgentStatus;
+  changedAt: string | null;
   onSetStatus: (status: AgentStatus) => Promise<void>;
 }
 
@@ -26,10 +28,32 @@ const STATUS_OPTIONS: {
 // States that the engine controls — agent cannot manually switch out of these
 const ENGINE_CONTROLLED: AgentStatus[] = ['dialing', 'on_call', 'wrap_up'];
 
-export function AgentStatusToggle({ agent, onSetStatus }: Props) {
-  if (!agent) return null;
+export function AgentStatusToggle({ status, changedAt, onSetStatus }: Props) {
+  const [elapsed, setElapsed] = useState<number>(0);
 
-  const isEngineControlled = ENGINE_CONTROLLED.includes(agent.status);
+  useEffect(() => {
+    if (!changedAt || status !== 'break') {
+      setElapsed(0);
+      return;
+    }
+
+    const start = new Date(changedAt).getTime();
+    const updateElapsed = () => {
+      setElapsed(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    };
+
+    updateElapsed();
+    const timer = setInterval(updateElapsed, 1000);
+    return () => clearInterval(timer);
+  }, [changedAt, status]);
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
+  const isEngineControlled = ENGINE_CONTROLLED.includes(status);
 
   return (
     <div className="status-toggle">
@@ -37,39 +61,44 @@ export function AgentStatusToggle({ agent, onSetStatus }: Props) {
 
       {isEngineControlled && (
         <div
-          className={`agent-status-badge agent-status-badge--${agent.status}`}
+          className={`agent-status-badge agent-status-badge--${status}`}
           style={{ marginBottom: 8, alignSelf: 'flex-start' }}
           role="status"
           aria-live="polite"
         >
-          <span className={`status-dot status-dot--${agent.status}`} aria-hidden="true" />
-          {agent.status === 'dialing'  && 'Dialing…'}
-          {agent.status === 'on_call'  && 'On Call'}
-          {agent.status === 'wrap_up'  && 'Wrap-Up'}
+          <span className={`status-dot status-dot--${status}`} aria-hidden="true" />
+          {status === 'dialing'  && 'Dialing…'}
+          {status === 'on_call'  && 'On Call'}
+          {status === 'wrap_up'  && 'Wrap-Up'}
         </div>
       )}
 
       <div className="status-buttons" role="group" aria-label="Agent status">
-        {STATUS_OPTIONS.map(({ status, label, description }) => {
-          const isActive = agent.status === status;
+        {STATUS_OPTIONS.map((opt) => {
+          const isActive = status === opt.status;
           const isDisabled = isEngineControlled;
 
           return (
             <button
-              key={status}
-              id={`status-btn-${status}`}
+              key={opt.status}
+              id={`status-btn-${opt.status}`}
               className={`status-btn${isActive ? ' status-btn--active' : ''}`}
               disabled={isDisabled}
               aria-pressed={isActive}
-              aria-label={`${label} — ${description}`}
+              aria-label={`${opt.label} — ${opt.description}`}
               onClick={() => {
                 if (!isDisabled && !isActive) {
-                  onSetStatus(status).catch(console.error);
+                  onSetStatus(opt.status).catch(console.error);
                 }
               }}
             >
-              <span className={`status-dot status-dot--${status}`} aria-hidden="true" />
-              <span>{label}</span>
+              <span className={`status-dot status-dot--${opt.status}`} aria-hidden="true" />
+              <span>{opt.label}</span>
+              {isActive && opt.status === 'break' && (
+                <span style={{ marginLeft: 'auto', fontSize: '0.85em', color: 'var(--warning)', fontWeight: 'bold' }}>
+                  {formatTime(elapsed)}
+                </span>
+              )}
             </button>
           );
         })}
@@ -81,7 +110,7 @@ export function AgentStatusToggle({ agent, onSetStatus }: Props) {
           style={{ padding: '0 4px' }}
           role="note"
         >
-          {agent.status === 'wrap_up'
+          {status === 'wrap_up'
             ? 'Submit a disposition to continue.'
             : 'Status is managed automatically.'}
         </p>
@@ -89,3 +118,4 @@ export function AgentStatusToggle({ agent, onSetStatus }: Props) {
     </div>
   );
 }
+

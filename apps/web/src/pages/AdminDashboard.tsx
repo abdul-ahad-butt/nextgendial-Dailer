@@ -26,6 +26,7 @@ export function AdminDashboard() {
 
   // Agent State
   const [agents, setAgents] = useState<User[]>([]);
+  const [agentStatuses, setAgentStatuses] = useState<any[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(true);
   
   // Create Agent State
@@ -54,7 +55,11 @@ export function AdminDashboard() {
 
   useEffect(() => {
     fetchAgents();
+    fetchAgentStatuses();
     fetchBatches();
+    
+    const interval = setInterval(fetchAgentStatuses, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchAgents = async () => {
@@ -66,6 +71,15 @@ export function AdminDashboard() {
       console.error('Failed to load agents', err);
     } finally {
       setLoadingAgents(false);
+    }
+  };
+
+  const fetchAgentStatuses = async () => {
+    try {
+      const data = await api.admin.getAgentStatus();
+      setAgentStatuses(data);
+    } catch (err) {
+      console.error('Failed to load agent statuses', err);
     }
   };
 
@@ -289,16 +303,36 @@ export function AdminDashboard() {
             <h2 style={{ fontSize: 18, marginBottom: 16 }}>Existing Agents</h2>
             {loadingAgents ? (
               <span className="spinner" />
-            ) : agents.length === 0 ? (
+            ) : agentStatuses.length === 0 ? (
               <p className="text-muted text-sm">No agents found.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {agents.map(a => (
-                  <div key={a.id} style={{ padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ fontWeight: 600 }}>{a.username}</div>
-                    <div className="text-muted text-sm" style={{ fontFamily: 'var(--font-mono)' }}>{a.id.slice(0, 8)}...</div>
-                  </div>
-                ))}
+                {agentStatuses.map(a => {
+                  const status = a.status || 'offline';
+                  const changedAt = a.changed_at ? new Date(a.changed_at) : null;
+                  const elapsedMs = changedAt ? Date.now() - changedAt.getTime() : 0;
+                  const elapsedMins = Math.floor(elapsedMs / 60000);
+                  
+                  return (
+                    <div key={a.user_id} style={{ padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ fontWeight: 600 }}>{a.username}</div>
+                        <div className="text-muted text-sm" style={{ fontFamily: 'var(--font-mono)' }}>{a.user_id.slice(0, 8)}...</div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                        <div className={`agent-status-badge agent-status-badge--${status}`} style={{ fontSize: 12, padding: '2px 8px' }}>
+                          <span className={`status-dot status-dot--${status}`} />
+                          {status.replace('_', ' ')}
+                        </div>
+                        {changedAt && (
+                          <div className="text-muted text-xs">
+                            {elapsedMins} min
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

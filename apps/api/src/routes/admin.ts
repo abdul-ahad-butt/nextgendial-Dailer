@@ -294,4 +294,16 @@ admin.post('/numbers/assign', zValidator('json', assignNumberSchema), async (c) 
   return c.json({ success: true });
 });
 
+admin.get('/agent-status', async (c) => {
+  const { results } = await c.env.DB.prepare(`
+    SELECT u.id as user_id, u.username, a.status, a.changed_at 
+    FROM users u
+    LEFT JOIN agent_status a ON u.id = a.user_id
+    WHERE u.role = 'agent'
+    ORDER BY u.created_at DESC
+  `).all();
+
+  return c.json({ data: results });
+});
+
 export default admin;

@@ -9,68 +9,52 @@
  * upgrade would eliminate the polling entirely.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Agent, AgentStatus } from '../types';
+import { useCallback, useEffect, useState } from 'react';
+import type { AgentStatus } from '../types';
 import { api } from '../lib/api';
 
-const POLL_INTERVAL_MS = 4000;
-
 interface UseAgentStatusResult {
-  agent: Agent | null;
+  currentStatus: AgentStatus;
+  changedAt: string | null;
   loading: boolean;
   error: string | null;
   setStatus: (status: AgentStatus) => Promise<void>;
   refetch: () => Promise<void>;
 }
 
-export function useAgentStatus(agentId: string | null): UseAgentStatusResult {
-  const [agent, setAgent] = useState<Agent | null>(null);
-  const [loading, setLoading] = useState(false);
+export function useAgentStatus(): UseAgentStatusResult {
+  const [currentStatus, setCurrentStatus] = useState<AgentStatus>('offline');
+  const [changedAt, setChangedAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchAgent = useCallback(async () => {
-    if (!agentId) return;
+  const fetchStatus = useCallback(async () => {
     try {
-      const data = await api.agents.get(agentId);
-      setAgent(data);
+      const data = await api.agent.status();
+      setCurrentStatus(data.status);
+      setChangedAt(data.changed_at);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch agent');
+      setError(err instanceof Error ? err.message : 'Failed to fetch status');
     }
-  }, [agentId]);
+  }, []);
 
-  // Initial fetch
   useEffect(() => {
-    if (!agentId) return;
-    setLoading(true);
-    fetchAgent().finally(() => setLoading(false));
-  }, [agentId, fetchAgent]);
+    fetchStatus().finally(() => setLoading(false));
+  }, [fetchStatus]);
 
-  // Polling
-  useEffect(() => {
-    if (!agentId) return;
+  const setStatus = useCallback(async (status: AgentStatus) => {
+    try {
+      await api.agent.setStatus(status);
+      setCurrentStatus(status);
+      setChangedAt(new Date().toISOString());
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update status');
+      throw err;
+    }
+  }, []);
 
-    intervalRef.current = setInterval(fetchAgent, POLL_INTERVAL_MS);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [agentId, fetchAgent]);
-
-  const setStatus = useCallback(
-    async (status: AgentStatus) => {
-      if (!agentId) return;
-      try {
-        const updated = await api.agents.updateStatus(agentId, status);
-        setAgent(updated);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to update status');
-        throw err; // re-throw so UI can handle
-      }
-    },
-    [agentId],
-  );
-
-  return { agent, loading, error, setStatus, refetch: fetchAgent };
+  return { currentStatus, changedAt, loading, error, setStatus, refetch: fetchStatus };
 }
+

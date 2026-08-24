@@ -65,6 +65,7 @@ const manualCallSchema = z.object({
   leadId: z.string().uuid().optional(),
   campaignId: z.string().uuid().optional(),
   telnyx_call_control_id: z.string().optional(),
+  direction: z.enum(['outbound', 'inbound']).optional(),
 });
 
 calls.post('/manual', zValidator('json', manualCallSchema), async (c) => {
@@ -72,10 +73,11 @@ calls.post('/manual', zValidator('json', manualCallSchema), async (c) => {
   
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
+  const direction = body.direction || 'outbound';
   
   await c.env.DB.prepare(`
     INSERT INTO call_logs (id, agent_id, lead_id, campaign_id, telnyx_call_control_id, direction, status, start_time, created_at)
-    VALUES (?, ?, ?, ?, ?, 'outbound', 'in-progress', ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, 'ringing', ?, ?)
   `)
   .bind(
     id,
@@ -83,9 +85,47 @@ calls.post('/manual', zValidator('json', manualCallSchema), async (c) => {
     body.leadId || null,
     body.campaignId || null,
     body.telnyx_call_control_id || null,
+    direction,
     now,
     now
   ).run();
+  
+  const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
+  return c.json({ data: callLog });
+});
+
+const updateCallSchema = z.object({
+  status: z.string().optional(),
+  end_time: z.string().optional(),
+  duration: z.number().optional(),
+});
+
+calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
+  const id = c.req.param('id');
+  const body = c.req.valid('json');
+  
+  const updates: string[] = [];
+  const values: any[] = [];
+  
+  if (body.status) {
+    updates.push('status = ?');
+    values.push(body.status);
+  }
+  if (body.end_time) {
+    updates.push('end_time = ?');
+    values.push(body.end_time);
+  }
+  if (body.duration !== undefined) {
+    updates.push('duration = ?');
+    values.push(body.duration);
+  }
+  
+  if (updates.length > 0) {
+    values.push(id);
+    await c.env.DB.prepare(`UPDATE call_logs SET ${updates.join(', ')} WHERE id = ?`)
+      .bind(...values)
+      .run();
+  }
   
   const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
   return c.json({ data: callLog });
