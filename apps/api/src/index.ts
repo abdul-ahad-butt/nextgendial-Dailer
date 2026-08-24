@@ -31,7 +31,7 @@ app.use('*', logger());
 app.use('/api/*', async (c, next) =>
   cors({
     origin: '*',
-    allowMethods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Authorization', 'Content-Type'],
     credentials: true,
   })(c, next),
