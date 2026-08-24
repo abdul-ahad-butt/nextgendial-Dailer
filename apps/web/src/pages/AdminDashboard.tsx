@@ -11,19 +11,6 @@ interface User {
   created_at: string;
 }
 
-interface Batch {
-  id: string;
-  file_name: string;
-  total_leads: number;
-  uploaded_at: string;
-  assigned_agent_username: string | null;
-  dialed_count: number;
-  completed_count: number;
-  pending_count: number;
-}
-
-
-
 export function AdminDashboard() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -33,9 +20,7 @@ export function AdminDashboard() {
 
   // Agent State
   const [agents, setAgents] = useState<User[]>([]);
-  const [workSummary, setWorkSummary] = useState<any[]>([]);
-  const [loadingAgents, setLoadingAgents] = useState(true);
-  
+
   // Create Agent State
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -55,69 +40,26 @@ export function AdminDashboard() {
   const [selectedPhoneColIdx, setSelectedPhoneColIdx] = useState<number | ''>('');
   const [pendingUploadData, setPendingUploadData] = useState<any>(null);
 
-  // Batches State
-  const [batches, setBatches] = useState<Batch[]>([]);
-  const [loadingBatches, setLoadingBatches] = useState(false);
-  const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
+
 
   useEffect(() => {
     fetchAgents();
-    fetchWorkSummary();
-    fetchBatches();
     
     const interval = setInterval(() => {
-      fetchWorkSummary();
-      fetchBatches();
+      fetchAgents();
     }, 5000);
     return () => clearInterval(interval);
   }, []);
 
   const fetchAgents = async () => {
     try {
-      setLoadingAgents(true);
       const data = await api.admin.getAgents();
       setAgents(data);
     } catch (err) {
       console.error('Failed to load agents', err);
-    } finally {
-      setLoadingAgents(false);
     }
   };
 
-  const fetchWorkSummary = async () => {
-    try {
-      const data = await api.admin.getWorkSummary();
-      setWorkSummary(data);
-    } catch (err) {
-      console.error('Failed to load work summary', err);
-    }
-  };
-
-  const fetchBatches = async () => {
-    try {
-      setLoadingBatches(true);
-      const data = await api.admin.getBatches();
-      setBatches(data);
-    } catch (err) {
-      console.error('Failed to load batches', err);
-    } finally {
-      setLoadingBatches(false);
-    }
-  };
-
-  const handleDeleteBatch = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this batch and all its leads?')) return;
-    try {
-      setDeletingBatchId(id);
-      await api.admin.deleteBatch(id);
-      await fetchBatches();
-    } catch (err) {
-      console.error('Failed to delete batch', err);
-      alert('Failed to delete batch');
-    } finally {
-      setDeletingBatchId(null);
-    }
-  };
 
   const handleCreateAgent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -172,7 +114,6 @@ export function AdminDashboard() {
     const result = await api.admin.uploadLeads(assignedUserId, file!.name, parsedLeads);
     setUploadResult(result);
     setFile(null); // Reset file
-    fetchBatches(); // Refresh batches table
     setUploading(false);
   };
 
@@ -238,13 +179,25 @@ export function AdminDashboard() {
             Dashboard
           </button>
           <button 
+            className="btn btn-ghost"
+            onClick={() => navigate('/admin/agent-status')}
+          >
+            Agent Status
+          </button>
+          <button 
+            className="btn btn-ghost"
+            onClick={() => navigate('/admin/leadsheets')}
+          >
+            Lead Sheets
+          </button>
+          <button 
             className={`btn ${activeTab === 'numbers' ? 'btn-primary' : 'btn-ghost'}`}
             onClick={() => setActiveTab('numbers')}
           >
             Phone Numbers
           </button>
           <button 
-            className={`btn btn-ghost`}
+            className="btn btn-ghost"
             onClick={() => navigate('/admin/recordings')}
           >
             Call Recordings
@@ -313,40 +266,6 @@ export function AdminDashboard() {
                 {creatingAgent ? <span className="spinner" /> : 'Create Agent'}
               </button>
             </form>
-          </div>
-
-          <div className="card" style={{ padding: 24 }}>
-            <h2 style={{ fontSize: 18, marginBottom: 16 }}>Agent Work Summary</h2>
-            {loadingAgents ? (
-              <span className="spinner" />
-            ) : workSummary.length === 0 ? (
-              <p className="text-muted text-sm">No agents found.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {workSummary.map(a => {
-                  const status = a.status || 'offline';
-                  
-                  return (
-                    <div key={a.agent_id} style={{ padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div style={{ fontWeight: 600 }}>{a.username}</div>
-                        <div className="text-muted text-sm" style={{ fontFamily: 'var(--font-mono)' }}>{a.agent_id.slice(0, 8)}...</div>
-                        <div className="text-muted text-xs" style={{ marginTop: 4 }}>
-                          Calls: {a.total_calls_made} | Talk: {Math.floor(a.total_talk_time_seconds / 60)}m {a.total_talk_time_seconds % 60}s | 
-                          Active: {Math.floor(a.total_active_seconds / 60)}m | Break: {Math.floor(a.total_break_seconds / 60)}m
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                        <div className={`agent-status-badge agent-status-badge--${status}`} style={{ fontSize: 12, padding: '2px 8px' }}>
-                          <span className={`status-dot status-dot--${status}`} />
-                          {status.replace('_', ' ')}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
 
@@ -451,67 +370,6 @@ export function AdminDashboard() {
 
         </div>
 
-        {/* FULL WIDTH: BATCHES TABLE */}
-        <div className="card" style={{ padding: 24, overflowX: 'auto' }}>
-          <h2 style={{ fontSize: 18, marginBottom: 16 }}>Uploaded Lead Sheets</h2>
-          {loadingBatches ? (
-            <span className="spinner" />
-          ) : batches.length === 0 ? (
-            <p className="text-muted text-sm">No lead sheets uploaded yet.</p>
-          ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '12px 8px', fontWeight: 500 }}>File Name</th>
-                  <th style={{ padding: '12px 8px', fontWeight: 500 }}>Date</th>
-                  <th style={{ padding: '12px 8px', fontWeight: 500 }}>Leads</th>
-                  <th style={{ padding: '12px 8px', fontWeight: 500 }}>Assigned To</th>
-                  <th style={{ padding: '12px 8px', fontWeight: 500, textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {batches.map(b => (
-                  <tr key={b.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td style={{ padding: '12px 8px', fontWeight: 500 }}>{b.file_name}</td>
-                    <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
-                      {new Date(b.uploaded_at).toLocaleString()}
-                    </td>
-                    <td style={{ padding: '12px 8px' }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                        <div>{b.dialed_count} / {b.total_leads} Dialed</div>
-                        <div style={{ height: 6, width: '100%', background: 'var(--surface-hover)', borderRadius: 3, overflow: 'hidden' }}>
-                           <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, (b.dialed_count / (b.total_leads || 1)) * 100))}%`, background: 'var(--primary)' }} />
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{b.completed_count} Completed, {b.pending_count} Pending</div>
-                      </div>
-                    </td>
-                    <td style={{ padding: '12px 8px' }}>
-                      {b.assigned_agent_username ? (
-                        <span style={{ padding: '2px 8px', background: 'var(--primary-dim)', color: 'var(--primary)', borderRadius: 12, fontSize: 12, fontWeight: 500 }}>
-                          {b.assigned_agent_username}
-                        </span>
-                      ) : (
-                        <span style={{ padding: '2px 8px', background: 'var(--surface-hover)', color: 'var(--text-muted)', borderRadius: 12, fontSize: 12, fontWeight: 500 }}>
-                          General Pool
-                        </span>
-                      )}
-                    </td>
-                    <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                      <button 
-                        className="btn btn-ghost" 
-                        style={{ color: 'var(--danger)', padding: '6px 12px', fontSize: 13 }}
-                        disabled={deletingBatchId === b.id}
-                        onClick={() => handleDeleteBatch(b.id)}
-                      >
-                        {deletingBatchId === b.id ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Delete'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
 
       </main>
       )}

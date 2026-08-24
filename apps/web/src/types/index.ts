@@ -30,4 +30,5 @@ export interface ActiveCall {
   /** lead-leg call_control_id, from client_state */
   leadCallControlId: string | null;
   isMuted: boolean;
+  isHeld: boolean;
 }

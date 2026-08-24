@@ -7,8 +7,12 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './pages/Login';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { AdminLeadSheets } from './pages/AdminLeadSheets';
 import { AdminRecordings } from './pages/AdminRecordings';
+import { AdminAgentStatus } from './pages/AdminAgentStatus';
 import { AgentDashboard } from './pages/AgentDashboard';
+import { api } from './lib/api';
+import { useState, useEffect } from 'react';
 
 // Root redirect handler
 function RootRedirect() {
@@ -27,19 +31,35 @@ function RootRedirect() {
 }
 
 // Minimal wrapper for the AgentDashboard to pass required props 
-// (assuming we pass the agent object with id, name to it, though we will likely fetch it securely later)
+// (fetching actual agent details based on JWT sub)
 function AgentDashboardWrapper() {
   const { user, logout } = useAuth();
+  const [agentDetails, setAgentDetails] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   
-  if (!user) return null;
+  useEffect(() => {
+    if (user?.sub) {
+      api.agents.get(user.sub)
+        .then(agentData => setAgentDetails(agentData))
+        .catch(console.error)
+        .finally(() => setLoading(false));
+    }
+  }, [user?.sub]);
 
-  // We construct a mock Agent object for now to satisfy the existing AgentDashboard props
-  // since the real agent data will come from the backend based on the JWT
+  if (!user) return null;
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <span className="spinner" />
+      </div>
+    );
+  }
+
   const agent = {
     id: user.sub,
-    username: 'Agent',
+    username: agentDetails?.username || 'Agent',
     email: '',
-    status: 'offline'
+    status: agentDetails?.status || 'offline'
   } as any;
 
   return <AgentDashboard agent={agent} onLogout={logout} />;
@@ -54,6 +74,8 @@ function App() {
           
           <Route element={<ProtectedRoute allowedRole="admin" />}>
             <Route path="/admin/recordings" element={<AdminRecordings />} />
+            <Route path="/admin/leadsheets" element={<AdminLeadSheets />} />
+            <Route path="/admin/agent-status" element={<AdminAgentStatus />} />
             <Route path="/admin/*" element={<AdminDashboard />} />
           </Route>
           

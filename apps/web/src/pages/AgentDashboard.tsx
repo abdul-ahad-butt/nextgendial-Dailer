@@ -15,7 +15,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { Agent, Campaign } from '../types';
 import { useAgentStatus } from '../hooks/useAgentStatus';
 import { useTelnyxClient } from '../hooks/useTelnyxClient';
-import { ActiveCallBar } from '../components/ActiveCallBar';
+import { ActiveCallPanel } from '../components/ActiveCallPanel';
 import { AgentStatusToggle } from '../components/AgentStatusToggle';
 import { CallHistoryTable } from '../components/CallHistoryTable';
 import { Dialer } from '../components/Dialer';
@@ -30,7 +30,7 @@ interface Props {
 
 export function AgentDashboard({ agent, onLogout }: Props) {
   const { currentStatus, changedAt, setStatus, error: statusError } = useAgentStatus();
-  const { activeCall, callContext, connectionState, mute, unmute, hangup, answer, reject, newCall, retryConnection } =
+  const { activeCall, callContext, connectionState, mute, unmute, toggleHold, sendDTMF, hangup, answer, reject, newCall, retryConnection } =
     useTelnyxClient(agent.id, currentStatus);
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -89,8 +89,29 @@ export function AgentDashboard({ agent, onLogout }: Props) {
     fetchLeads(); // Refresh leads in case one was completed
   }, []);
 
-  // Auto-dialer loop is now fully handled by the backend pacing engine (engine.ts).
-  // The frontend simply polls agent status and receives WebRTC calls when a lead answers.
+  // Auto-dialer loop
+  useEffect(() => {
+    if (
+      currentStatus === 'available' &&
+      connectionState === 'ready' &&
+      !activeCall &&
+      !showDisposition
+    ) {
+      const timer = setTimeout(async () => {
+        try {
+          const res = await api.leads.list({ status: 'pending' });
+          const nextLead = res.data[0];
+          if (nextLead) {
+            handleManualCall(nextLead.phone_number, nextLead.id);
+          }
+        } catch (err) {
+          console.error('[AutoDialer] Error fetching pending leads:', err);
+        }
+      }, 3000); // 3-second wrap-up delay
+
+      return () => clearTimeout(timer);
+    }
+  }, [currentStatus, connectionState, activeCall, showDisposition, handleManualCall]);
 
   const displayAgent = agent;
 
@@ -136,9 +157,12 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             </div>
             <div>
               <div className="agent-name" style={{ fontSize: 13 }}>{displayAgent.username || 'Agent'}</div>
+              <div className="text-muted text-xs" style={{ marginTop: 2, fontFamily: 'var(--font-mono)' }}>
+                ID: {displayAgent.id.slice(0, 8).toUpperCase()}
+              </div>
               <div
                 className={`agent-status-badge agent-status-badge--${currentStatus}`}
-                style={{ marginTop: 2 }}
+                style={{ marginTop: 4 }}
                 role="status"
                 aria-live="polite"
               >
@@ -159,15 +183,17 @@ export function AgentDashboard({ agent, onLogout }: Props) {
         </div>
       </header>
 
-      {/* ── Active Call Bar (sticky) ── */}
+      {/* ── Active Call Panel (Floating) ── */}
       {(activeCall || currentStatus === 'wrap_up' || currentStatus === 'on_call') && (
-        <ActiveCallBar
+        <ActiveCallPanel
           agent={displayAgent}
           activeCall={activeCall}
           callContext={callContext}
           script={currentScript}
           onMute={mute}
           onUnmute={unmute}
+          onToggleHold={toggleHold}
+          onSendDTMF={sendDTMF}
           onHangup={hangup}
           onAnswer={answer}
           onReject={reject}
@@ -191,7 +217,9 @@ export function AgentDashboard({ agent, onLogout }: Props) {
               <div className="agent-avatar">{displayAgent.username?.charAt(0).toUpperCase() || '?'}</div>
               <div>
                 <div className="agent-name">{displayAgent.username || 'Agent'}</div>
-                <div className="agent-email">{displayAgent.email}</div>
+                <div className="agent-email text-muted text-sm" style={{ fontFamily: 'var(--font-mono)' }}>
+                  ID: {displayAgent.id.slice(0, 8).toUpperCase()}
+                </div>
               </div>
             </div>
           </div>

@@ -54,7 +54,19 @@ export function AdminRecordings() {
           </button>
           <button 
             className="btn btn-ghost"
-            onClick={() => navigate('/admin/numbers')}
+            onClick={() => navigate('/admin/agent-status')}
+          >
+            Agent Status
+          </button>
+          <button 
+            className="btn btn-ghost"
+            onClick={() => navigate('/admin/leadsheets')}
+          >
+            Lead Sheets
+          </button>
+          <button 
+            className="btn btn-ghost"
+            onClick={() => navigate('/admin')}
           >
             Phone Numbers
           </button>

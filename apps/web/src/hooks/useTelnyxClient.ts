@@ -17,6 +17,14 @@ import { TelnyxRTC } from '@telnyx/webrtc';
 import type { ActiveCall, CallLog, ClientState } from '../types';
 import { api } from '../lib/api';
 
+function formatE164(phone: string): string {
+  if (!phone) return '';
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return `+${digits}`; // Fallback for international
+}
+
 type ClientState_Partial = Partial<ClientState>;
 
 export type WebRTCConnectionState = 'idle' | 'connecting' | 'ready' | 'error';
@@ -30,6 +38,8 @@ interface UseTelnyxClientResult {
   hangup: () => void;
   answer: () => void;
   reject: () => void;
+  toggleHold: () => void;
+  sendDTMF: (digit: string) => void;
   newCall: (destinationNumber: string, callerNumber?: string, callLogId?: string | null, leadCallControlId?: string | null) => void;
   retryConnection: () => void;
 }
@@ -138,6 +148,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
             callLogId: state.callLogId ?? null,
             leadCallControlId: state.leadId ?? null, // We'll resolve the actual ccid below
             isMuted: false,
+            isHeld: false,
           };
           setActiveCall(newActiveCall);
 
@@ -172,6 +183,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
                   callLogId: logRes?.id ?? null,
                   leadCallControlId: null,
                   isMuted: false,
+                  isHeld: false,
                 });
                 
                 // Set call context to show the caller info
@@ -254,6 +266,22 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
     setCallContext(null);
   }, [activeCall]);
 
+  const toggleHold = useCallback(() => {
+    if (!activeCall?.sdkCall) return;
+    if (activeCall.isHeld) {
+      activeCall.sdkCall.unhold?.();
+      setActiveCall((prev) => (prev ? { ...prev, isHeld: false } : null));
+    } else {
+      activeCall.sdkCall.hold?.();
+      setActiveCall((prev) => (prev ? { ...prev, isHeld: true } : null));
+    }
+  }, [activeCall]);
+
+  const sendDTMF = useCallback((digit: string) => {
+    if (!activeCall?.sdkCall) return;
+    activeCall.sdkCall.dtmf?.(digit);
+  }, [activeCall]);
+
   /**
    * Initiate a manual outbound call from the dialpad.
    * This does NOT go through the dialer engine — it's a direct WebRTC call.
@@ -264,39 +292,75 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
         console.warn('[webrtc] newCall: client not ready');
         return;
       }
+      const e164Dest = formatE164(destinationNumber);
+      const e164Caller = formatE164(callerNumber);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const call = (clientRef.current as any).newCall({
-        destinationNumber,
-        callerNumber,
+        destinationNumber: e164Dest,
+        callerNumber: e164Caller,
       });
       setActiveCall({
         sdkCall: call,
         callLogId,
         leadCallControlId,
         isMuted: false,
+        isHeld: false,
       });
     },
     [],
   );
 
-  // ── Clear active call when SDK call ends ───────────────────
+  // ── Clear active call when SDK call ends + Timeout fallback ──
 
   useEffect(() => {
     if (!activeCall?.sdkCall) return;
 
     const sdkCall = activeCall.sdkCall;
     let answered = false;
+    let connectionTimeout: any = null;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const handleEnd = () => {
+      if (connectionTimeout) clearTimeout(connectionTimeout);
       setActiveCall(null);
       // Don't clear callContext here — ActiveCallBar keeps it until
       // the agent's status flips out of wrap_up via polling
     };
 
+    // 10s timeout fallback if stuck in new/connecting/ringing
+    if (['new', 'connecting', 'ringing'].includes(sdkCall.state)) {
+      connectionTimeout = setTimeout(() => {
+        if (['new', 'connecting', 'ringing'].includes(sdkCall.state)) {
+          console.error('[webrtc] Call connection timed out (10s) without connecting to media.');
+          
+          if (activeCall.callLogId) {
+            api.calls.update(activeCall.callLogId, { status: 'failed', end_time: new Date().toISOString() }).catch(console.error);
+          }
+          if (activeCall.leadCallControlId) {
+            // Reset lead status to pending so it can be retried later
+            api.leads.updateStatus(activeCall.leadCallControlId, 'pending').catch(console.error);
+          }
+          
+          try { sdkCall.hangup?.(); } catch (e) {}
+          handleEnd();
+          
+          // Force a reconnect if the socket might be dead
+          retryConnection();
+        }
+      }, 10000);
+    }
+
     sdkCall.on?.('telnyx.notification', (n: { type?: string }) => {
       if (n?.type === 'callUpdate') {
         const state = sdkCall.state;
+        
+        // If state moved to active, clear the timeout
+        if (state === 'active' || state === 'answered') {
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout);
+            connectionTimeout = null;
+          }
+        }
         
         if (!answered && (state === 'active' || state === 'answered')) {
           answered = true;
@@ -319,9 +383,10 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
     });
 
     return () => {
+      if (connectionTimeout) clearTimeout(connectionTimeout);
       sdkCall.off?.('telnyx.notification', handleEnd);
     };
-  }, [activeCall?.sdkCall, activeCall?.callLogId, activeCall?.leadCallControlId]);
+  }, [activeCall?.sdkCall, activeCall?.callLogId, activeCall?.leadCallControlId, retryConnection]);
 
-  return { activeCall, callContext, connectionState, mute, unmute, hangup, answer, reject, newCall, retryConnection };
+  return { activeCall, callContext, connectionState, mute, unmute, toggleHold, sendDTMF, hangup, answer, reject, newCall, retryConnection };
 }

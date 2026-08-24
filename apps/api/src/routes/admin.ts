@@ -118,6 +118,25 @@ admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => 
   const { assigned_user_id, file_name, leads } = c.req.valid('json');
   const requestingAdminId = c.get('userId');
 
+  // Auto-Initialization Safeguard
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS lead_batches (
+        id TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        total_leads INTEGER NOT NULL DEFAULT 0,
+        assigned_user_id TEXT REFERENCES users(id),
+        uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `)
+  ]);
+
+  try {
+    await c.env.DB.prepare("ALTER TABLE leads ADD COLUMN batch_id TEXT REFERENCES lead_batches(id);").run();
+  } catch (e) {
+    // Column already exists
+  }
+
   // Validate assigned_user_id
   if (assigned_user_id !== null && assigned_user_id !== requestingAdminId) {
     const agent = await c.env.DB.prepare(
@@ -196,6 +215,25 @@ admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => 
 });
 
 admin.get('/leads/batches', async (c) => {
+  // Auto-Initialization Safeguard
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS lead_batches (
+        id TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        total_leads INTEGER NOT NULL DEFAULT 0,
+        assigned_user_id TEXT REFERENCES users(id),
+        uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `)
+  ]);
+
+  try {
+    await c.env.DB.prepare("ALTER TABLE leads ADD COLUMN batch_id TEXT REFERENCES lead_batches(id);").run();
+  } catch (e) {
+    // Column already exists
+  }
+
   const { results } = await c.env.DB.prepare(
     `SELECT 
        lb.id, 
@@ -340,10 +378,14 @@ admin.get('/agents/work-summary', async (c) => {
        COALESCE(al.total_active_seconds, 0) as total_active_seconds,
        COALESCE(al.total_break_seconds, 0) as total_break_seconds,
        COALESCE(al.total_calls_made, 0) as total_calls_made,
-       COALESCE(al.total_talk_time_seconds, 0) as total_talk_time_seconds
+       COALESCE(al.total_talk_time_seconds, 0) as total_talk_time_seconds,
+       l.phone_number as live_call_destination,
+       (strftime('%s', 'now') - strftime('%s', cl.started_at)) as live_call_duration
      FROM users u
      LEFT JOIN agent_status a ON u.id = a.user_id
      LEFT JOIN agent_activity_logs al ON u.id = al.agent_id AND al.date = date('now')
+     LEFT JOIN call_logs cl ON u.id = cl.agent_id AND cl.ended_at IS NULL AND cl.status NOT IN ('completed', 'failed', 'no_answer', 'busy', 'voicemail')
+     LEFT JOIN leads l ON cl.lead_id = l.id
      WHERE u.role = 'agent'`
   ).all();
 
