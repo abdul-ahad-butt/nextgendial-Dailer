@@ -18,6 +18,31 @@ interface Batch {
   assigned_agent_username: string | null;
 }
 
+function LiveDuration({ changedAt, status }: { changedAt: string | null; status: string }) {
+  const [now, setNow] = useState(Date.now());
+  
+  useEffect(() => {
+    // Update every second to keep the timer live
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!changedAt) return null;
+
+  const changedTime = new Date(changedAt).getTime();
+  const elapsedMs = Math.max(0, now - changedTime);
+  
+  if (status === 'on_call') {
+    const totalSeconds = Math.floor(elapsedMs / 1000);
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return <span>{mins}:{secs.toString().padStart(2, '0')}</span>;
+  } else {
+    const elapsedMins = Math.floor(elapsedMs / 60000);
+    return <span>{elapsedMins} min</span>;
+  }
+}
+
 export function AdminDashboard() {
   const { user, logout } = useAuth();
   
@@ -309,9 +334,6 @@ export function AdminDashboard() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {agentStatuses.map(a => {
                   const status = a.status || 'offline';
-                  const changedAt = a.changed_at ? new Date(a.changed_at) : null;
-                  const elapsedMs = changedAt ? Date.now() - changedAt.getTime() : 0;
-                  const elapsedMins = Math.floor(elapsedMs / 60000);
                   
                   return (
                     <div key={a.user_id} style={{ padding: '12px 16px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -324,11 +346,9 @@ export function AdminDashboard() {
                           <span className={`status-dot status-dot--${status}`} />
                           {status.replace('_', ' ')}
                         </div>
-                        {changedAt && (
-                          <div className="text-muted text-xs">
-                            {elapsedMins} min
-                          </div>
-                        )}
+                        <div className="text-muted text-xs">
+                          <LiveDuration changedAt={a.changed_at} status={status} />
+                        </div>
                       </div>
                     </div>
                   );

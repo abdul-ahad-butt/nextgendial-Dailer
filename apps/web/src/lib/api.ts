@@ -103,28 +103,33 @@ export const api = {
 
   admin: {
     getAgents: () =>
-      request<{ data: any[] }>('/admin/users').then((r) => r.data),
+      request<{ data: any[] }>('/admin/agents').then((r) => r.data),
 
     getAgentStatus: () =>
       request<{ data: any[] }>('/admin/agent-status').then((r) => r.data),
 
     createAgent: (data: { username: string; password: string }) =>
-      request<{ data: any }>('/admin/users', {
+      request<{ data: any }>('/admin/agents', {
         method: 'POST',
         body: JSON.stringify(data),
       }).then((r) => r.data),
 
     uploadLeads: (assigned_user_id: string | null, file_name: string, leads: any[]) =>
-      request<{ batch_id: string; inserted: number; skipped: number; errors: string[] }>('/admin/upload-leads', {
+      request<{ batch_id: string; inserted: number; skipped: number; errors: string[] }>('/admin/leads/upload', {
         method: 'POST',
         body: JSON.stringify({ assigned_user_id, file_name, leads }),
       }),
 
     getBatches: () =>
-      request<{ data: any[] }>('/admin/batches').then((r) => r.data),
+      request<{ data: any[] }>('/admin/leads/batches').then((r) => r.data),
 
     deleteBatch: (id: string) =>
-      request<{ deleted_batch_id: string }>(`/admin/batches/${id}`, {
+      request<{ deleted_batch_id: string }>(`/admin/leads/batch/${id}`, {
+        method: 'DELETE',
+      }),
+      
+    deleteLead: (id: string) =>
+      request<{ deleted_lead_id: string }>(`/admin/leads/${id}`, {
         method: 'DELETE',
       }),
 

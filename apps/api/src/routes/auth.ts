@@ -16,23 +16,39 @@ auth.post(
   zValidator('json', loginSchema),
   async (c) => {
     const { username, password } = c.req.valid('json');
+    const trimmedUsername = username.trim();
+    const trimmedPassword = password.trim();
 
-    // Look up the user by username in D1
+    // Look up the user by username in D1 (case-insensitive)
     const user = await c.env.DB.prepare(
-      'SELECT id, password_hash, role FROM users WHERE username = ?'
+      'SELECT id, username, password_hash, role, status FROM users WHERE LOWER(username) = LOWER(?)'
     )
-      .bind(username)
-      .first<{ id: string; password_hash: string; role: string }>();
+      .bind(trimmedUsername)
+      .first<{ id: string; username: string; password_hash: string; role: string; status: string }>();
 
     // Generic 401 if not found
     if (!user) {
-      return c.json({ error: 'Invalid credentials' }, 401);
+      console.log(`[Login Failed] Username not found: ${trimmedUsername}`);
+      return c.json({ error: 'Invalid username or password' }, 401);
     }
 
-    // Generic 401 if password fails
-    const isValid = await verifyPassword(password, user.password_hash);
+    // Check password
+    let isValid = await verifyPassword(trimmedPassword, user.password_hash);
+    
+    // Auto-migration logic: If the password fails the new hash check, 
+    // see if it matches the stored hash exactly (i.e. was stored as plain text)
+    if (!isValid && user.password_hash === trimmedPassword) {
+      console.log(`[Auto-Migration] Upgrading plain text password for user: ${trimmedUsername}`);
+      const newHash = await hashPassword(trimmedPassword);
+      await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+        .bind(newHash, user.id)
+        .run();
+      isValid = true;
+    }
+
     if (!isValid) {
-      return c.json({ error: 'Invalid credentials' }, 401);
+      console.log(`Login failed for user:`, trimmedUsername);
+      return c.json({ success: false, error: 'Invalid credentials' }, 401);
     }
 
     // Sign a new JWT
@@ -42,10 +58,14 @@ auth.post(
     );
 
     return c.json({
+      success: true,
       token,
-      role: user.role,
-      userId: user.id,
-    });
+      agent: {
+        id: user.id,
+        username: user.username,
+        status: user.status || 'offline',
+      }
+    }, 200);
   }
 );
 

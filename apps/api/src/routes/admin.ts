@@ -16,12 +16,14 @@ const createUserSchema = z.object({
   password: z.string().min(1),
 });
 
-admin.post('/users', zValidator('json', createUserSchema), async (c) => {
+admin.post('/agents', zValidator('json', createUserSchema), async (c) => {
   const { username, password } = c.req.valid('json');
+  const trimmedUsername = username.trim();
+  const trimmedPassword = password.trim();
 
-  // Reject if username already exists
-  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE username = ?')
-    .bind(username)
+  // Reject if username already exists (case-insensitive check is better here too)
+  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)')
+    .bind(trimmedUsername)
     .first();
 
   if (existing) {
@@ -30,7 +32,7 @@ admin.post('/users', zValidator('json', createUserSchema), async (c) => {
 
   // Hash password, insert as 'agent'
   const id = crypto.randomUUID();
-  const passwordHash = await hashPassword(password);
+  const passwordHash = await hashPassword(trimmedPassword);
   const role = 'agent';
   const sipUsername = `agent_${id.replace(/-/g, '')}`;
 
@@ -77,7 +79,7 @@ admin.post('/users', zValidator('json', createUserSchema), async (c) => {
   await c.env.DB.prepare(
     'INSERT INTO users (id, username, password_hash, role, telnyx_credential_id, telnyx_sip_username, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
-    .bind(id, username, passwordHash, role, telnyxCredentialId, sipUsername, 'offline')
+    .bind(id, trimmedUsername, passwordHash, role, telnyxCredentialId, sipUsername, 'offline')
     .run();
 
   // Return the created user (omitting password_hash)
@@ -90,7 +92,7 @@ admin.post('/users', zValidator('json', createUserSchema), async (c) => {
   return c.json({ data: createdUser }, 201);
 });
 
-admin.get('/users', async (c) => {
+admin.get('/agents', async (c) => {
   // Return all users with role='agent' ordered by created_at DESC
   const { results } = await c.env.DB.prepare(
     `SELECT id, username, created_at 
@@ -112,7 +114,7 @@ const uploadLeadsSchema = z.object({
   })).default([]),
 });
 
-admin.post('/upload-leads', zValidator('json', uploadLeadsSchema), async (c) => {
+admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => {
   const { assigned_user_id, file_name, leads } = c.req.valid('json');
   const requestingAdminId = c.get('userId');
 
@@ -193,7 +195,7 @@ admin.post('/upload-leads', zValidator('json', uploadLeadsSchema), async (c) => 
   });
 });
 
-admin.get('/batches', async (c) => {
+admin.get('/leads/batches', async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT lb.id, lb.file_name, lb.total_leads, lb.uploaded_at, u.username as assigned_agent_username
      FROM lead_batches lb
@@ -204,7 +206,7 @@ admin.get('/batches', async (c) => {
   return c.json({ data: results });
 });
 
-admin.delete('/batches/:id', async (c) => {
+admin.delete('/leads/batch/:id', async (c) => {
   const id = c.req.param('id');
 
   // Verify batch exists
@@ -221,6 +223,19 @@ admin.delete('/batches/:id', async (c) => {
 
   // Optionally we could return how many leads were deleted if we counted them, 
   return c.json({ deleted_batch_id: id });
+});
+
+admin.delete('/leads/:id', async (c) => {
+  const id = c.req.param('id');
+
+  // Atomically delete lead
+  const result = await c.env.DB.prepare('DELETE FROM leads WHERE id = ?').bind(id).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({ error: 'Lead not found' }, 404);
+  }
+
+  return c.json({ deleted_lead_id: id });
 });
 
 // GET /numbers
