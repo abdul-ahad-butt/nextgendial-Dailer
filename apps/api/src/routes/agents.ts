@@ -57,11 +57,11 @@ agents.post('/:id/webrtc-token', async (c) => {
     // Attempt auto-provisioning
     if (!c.env.TELNYX_API_KEY) {
       console.warn('[telnyx] Missing TELNYX_API_KEY in Cloudflare Worker secrets');
-      return c.json({ error: 'Missing TELNYX_API_KEY in Cloudflare Worker secrets. Run: npx wrangler secret put TELNYX_API_KEY' }, 400);
+      return c.json({ error: 'MISSING_TELNYX_CREDENTIALS', status: 400 }, 200);
     }
     if (!c.env.TELNYX_CONNECTION_ID) {
       console.warn('[telnyx] Missing TELNYX_CONNECTION_ID in Cloudflare Worker secrets');
-      return c.json({ error: 'Missing TELNYX_CONNECTION_ID in Cloudflare Worker secrets. Run: npx wrangler secret put TELNYX_CONNECTION_ID' }, 400);
+      return c.json({ error: 'MISSING_TELNYX_CREDENTIALS', status: 400 }, 200);
     }
     
     const sipUsername = user.telnyx_sip_username || `agent_${id.replace(/-/g, '')}`;

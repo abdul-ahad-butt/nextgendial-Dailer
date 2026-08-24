@@ -73,7 +73,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
       // 2. Initiate the call with the returned callLogId
       const callLogId = logRes?.id ?? null;
-      newCall(number, '', callLogId, leadId || null);
+      newCall(number, '+19564461280', callLogId, leadId || null);
 
       // 3. Update the lead status to 'calling'
       if (leadId) {

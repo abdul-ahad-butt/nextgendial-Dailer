@@ -88,9 +88,9 @@ export const api = {
       }).then((r) => r.data),
 
     webrtcToken: (id: string) =>
-      request<{ token: string }>(`/agents/${id}/webrtc-token`, {
+      request<{ token?: string; error?: string; status?: number }>(`/agents/${id}/webrtc-token`, {
         method: 'POST',
-      }).then((r) => r.token),
+      }).then((r) => r),
 
     create: (data: { name: string; email: string; telnyx_credential_id?: string; telnyx_sip_username?: string }) =>
       request<{ data: Agent }>('/agents', {

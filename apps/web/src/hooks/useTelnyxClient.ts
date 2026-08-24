@@ -45,7 +45,16 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
   const connectClient = useCallback(async (id: string) => {
     setConnectionState('connecting');
     try {
-      const token = await api.agents.webrtcToken(id);
+      const res = await api.agents.webrtcToken(id);
+
+      if (res.error === 'MISSING_TELNYX_CREDENTIALS') {
+        console.error('[webrtc] connectClient error: Missing TELNYX_CONNECTION_ID in Cloudflare Worker secrets. Run: npx wrangler secret put TELNYX_CONNECTION_ID');
+        setConnectionState('error');
+        return;
+      }
+
+      const token = res.token;
+      if (!token) throw new Error('No WebRTC token returned');
 
       // Destroy any previous client cleanly before creating a new one
       if (clientRef.current) {
