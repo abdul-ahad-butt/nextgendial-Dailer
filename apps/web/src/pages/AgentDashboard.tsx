@@ -89,40 +89,8 @@ export function AgentDashboard({ agent, onLogout }: Props) {
     fetchLeads(); // Refresh leads in case one was completed
   }, []);
 
-  // Auto-dialer loop
-  useEffect(() => {
-    let timeoutId: ReturnType<typeof setTimeout>;
-    
-    if (connectionState === 'ready' && currentStatus === 'available' && !activeCall) {
-      timeoutId = setTimeout(async () => {
-        try {
-          // fetch next pending lead
-          const res = await api.leads.list({ status: 'pending', limit: 1 });
-          const nextLead = res.data[0];
-          
-          if (nextLead && nextLead.phone_number) {
-            // initiate call
-            const logRes = await api.calls.logManual({
-              agentId: agent.id,
-              phoneNumber: nextLead.phone_number,
-              leadId: nextLead.id,
-              direction: 'outbound'
-            });
-            
-            newCall(nextLead.phone_number, '', logRes.id, nextLead.id);
-            await api.leads.updateStatus(nextLead.id, 'calling');
-            fetchLeads();
-          }
-        } catch (error) {
-          console.error('Auto-dialer error:', error);
-        }
-      }, 3000);
-    }
-    
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [connectionState, currentStatus, activeCall, agent.id, newCall]);
+  // Auto-dialer loop is now fully handled by the backend pacing engine (engine.ts).
+  // The frontend simply polls agent status and receives WebRTC calls when a lead answers.
 
   const displayAgent = agent;
 

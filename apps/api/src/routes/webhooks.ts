@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
+import { handleTelnyxWebhook } from '../dialer/engine';
 
 const webhooks = new Hono<AppEnv>();
 
@@ -9,7 +10,6 @@ webhooks.post('/telnyx', async (c) => {
   // Ideally, verify the Telnyx signature here using c.env.TELNYX_PUBLIC_KEY
   // See https://developers.telnyx.com/docs/api/v2/overview/webhooks for signature verification details.
   
-  // For now, we'll just log and acknowledge the webhook event.
   try {
     const payload = await c.req.json();
     const eventType = payload?.data?.event_type;
@@ -18,7 +18,10 @@ webhooks.post('/telnyx', async (c) => {
     
     console.log(`[Telnyx Webhook] Event: ${eventType}, Call ID: ${callControlId}, State: ${callState}`);
     
-    // TODO: Update D1 database with call status/duration if needed based on event type.
+    // Dispatch to dialer engine for pacing and state machine updates
+    if (payload?.data) {
+      c.executionCtx.waitUntil(handleTelnyxWebhook(c.env, payload.data));
+    }
 
     return c.json({ received: true });
   } catch (error: any) {

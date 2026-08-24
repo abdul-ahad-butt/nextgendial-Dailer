@@ -36,6 +36,8 @@ agent.get('/status', async (c) => {
   return c.json(row);
 });
 
+import { tryDialNextLead } from '../dialer/engine';
+
 const statusSchema = z.object({
   status: z.enum(['available', 'break', 'offline'])
 });
@@ -53,6 +55,10 @@ agent.patch('/status', zValidator('json', statusSchema), async (c) => {
   `)
   .bind(userId, status)
   .run();
+  
+  if (status === 'available') {
+    c.executionCtx.waitUntil(tryDialNextLead(c.env, userId));
+  }
 
   return c.json({ success: true, status });
 });

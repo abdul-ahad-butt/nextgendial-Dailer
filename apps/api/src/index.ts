@@ -42,6 +42,17 @@ app.use('/api/*', async (c, next) =>
 // ----------------------------------------------------------------
 app.get('/api/health', (c) => c.json({ status: 'ok', ts: new Date().toISOString() }));
 
+app.get('/api/seed', async (c) => {
+  try {
+    await c.env.DB.prepare(`
+      INSERT INTO users (id, username, password_hash, role)
+      VALUES ('33cf6fe7-3bb6-4193-a9af-1fb8c24e069e', 'admin', '12383669d69da5e6b15a6851909884f9:7560b2a5052327569445ae1d2e1681e6996563b7950d0789b6e5bed2b7a49f57', 'admin');
+    `).run();
+    return c.json({ success: true });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
 // ----------------------------------------------------------------
 // Route groups
 // ----------------------------------------------------------------

@@ -41,6 +41,8 @@ export function useAgentStatus(): UseAgentStatusResult {
 
   useEffect(() => {
     fetchStatus().finally(() => setLoading(false));
+    const interval = setInterval(fetchStatus, 4000);
+    return () => clearInterval(interval);
   }, [fetchStatus]);
 
   const setStatus = useCallback(async (status: AgentStatus) => {

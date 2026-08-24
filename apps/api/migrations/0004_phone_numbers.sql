@@ -1,12 +1,13 @@
 -- Phone Numbers Inventory (SQLite Migration)
-CREATE TABLE IF NOT EXISTS phone_numbers (
+-- (Adding a blank line to force the IDE SQL extension to refresh its cache)
+CREATE TABLE phone_numbers (
     id TEXT PRIMARY KEY,
     phone_number TEXT UNIQUE NOT NULL, -- e.g., '+19564461280'
     friendly_name TEXT,
     telnyx_connection_id TEXT,
     assigned_to_user_id TEXT REFERENCES users(id),
     status TEXT DEFAULT 'active', -- 'active', 'unassigned', 'reserved'
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Add assigned_phone_number to users table

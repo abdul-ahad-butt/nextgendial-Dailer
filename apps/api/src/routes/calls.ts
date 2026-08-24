@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { tryDialNextLead } from '../dialer/engine';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import type { AppEnv } from '../types';
@@ -114,6 +115,16 @@ calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
   if (body.end_time) {
     updates.push('end_time = ?');
     values.push(body.end_time);
+    
+    // Automatically calculate duration if not provided
+    if (body.duration === undefined) {
+      const log = await c.env.DB.prepare('SELECT start_time FROM call_logs WHERE id = ?').bind(id).first<{ start_time: string }>();
+      if (log?.start_time) {
+        const start = new Date(log.start_time).getTime();
+        const end = new Date(body.end_time).getTime();
+        body.duration = Math.floor((end - start) / 1000);
+      }
+    }
   }
   if (body.duration !== undefined) {
     updates.push('duration = ?');
@@ -129,6 +140,50 @@ calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
   
   const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
   return c.json({ data: callLog });
+});
+
+const dispositionSchema = z.object({
+  disposition: z.string(),
+  notes: z.string().optional(),
+});
+
+calls.post('/:id/disposition', zValidator('json', dispositionSchema), async (c) => {
+  const id = c.req.param('id');
+  const { disposition, notes } = c.req.valid('json');
+  
+  const callLog = await c.env.DB.prepare('SELECT lead_id, agent_id FROM call_logs WHERE id = ?').bind(id).first<{ lead_id: string | null, agent_id: string | null }>();
+  if (!callLog) return c.json({ error: 'Call not found' }, 404);
+
+  await c.env.DB.prepare('UPDATE call_logs SET disposition = ?, disposition_notes = ? WHERE id = ?')
+    .bind(disposition, notes || null, id)
+    .run();
+    
+  if (callLog.lead_id) {
+     let leadStatus = 'completed';
+     if (disposition === 'dnc_request') leadStatus = 'dnc';
+     else if (disposition === 'callback') leadStatus = 'pending';
+     else if (disposition === 'wrong_number' || disposition === 'no_answer' || disposition === 'voicemail') leadStatus = 'failed';
+     
+     await c.env.DB.prepare('UPDATE leads SET status = ?, updated_at = datetime("now") WHERE id = ?')
+       .bind(leadStatus, callLog.lead_id)
+       .run();
+  }
+  
+  if (callLog.agent_id) {
+     const result = await c.env.DB.prepare(`
+       UPDATE agent_status SET status = 'available', changed_at = datetime('now')
+       WHERE user_id = ? AND status = 'wrap_up'
+     `).bind(callLog.agent_id).run();
+     
+     if (result.meta.changes > 0) {
+        c.executionCtx.waitUntil((async () => {
+           await new Promise(resolve => setTimeout(resolve, 3000));
+           await tryDialNextLead(c.env, callLog.agent_id!);
+        })());
+     }
+  }
+
+  return c.json({ success: true });
 });
 
 export default calls;
