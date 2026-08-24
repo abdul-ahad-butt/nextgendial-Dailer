@@ -29,7 +29,14 @@ export function Login() {
       }
 
       login(data.token);
-      navigate('/'); // App.tsx logic will redirect them to their dashboard
+      
+      // Explicit role-based redirection
+      const userRole = data.role || (data.agent && data.agent.role) || 'agent';
+      if (userRole === 'admin') {
+        navigate('/admin');
+      } else {
+        navigate('/agent');
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
