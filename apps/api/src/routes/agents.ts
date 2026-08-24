@@ -134,8 +134,17 @@ agents.post('/:id/webrtc-token', async (c) => {
     return c.json({ error: 'Failed to generate WebRTC token', status: 500 }, 200);
   }
   
-  const telnyxData = await res.json() as any;
-  return c.json({ token: telnyxData.data });
+  const textRes = await res.text();
+  
+  let tokenData = textRes;
+  try {
+    const parsed = JSON.parse(textRes);
+    tokenData = parsed.data || parsed.token || parsed;
+  } catch (e) {
+    // Expected behavior: Telnyx returns raw JWT string (eyJ...) which isn't valid JSON
+  }
+
+  return c.json({ token: tokenData });
 });
 
 export default agents;
