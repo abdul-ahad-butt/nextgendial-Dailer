@@ -30,7 +30,7 @@ interface Props {
 
 export function AgentDashboard({ agent, onLogout }: Props) {
   const { agent: liveAgent, setStatus, error: statusError } = useAgentStatus(agent.id);
-  const { activeCall, callContext, connectionState, mute, unmute, hangup, newCall } =
+  const { activeCall, callContext, connectionState, mute, unmute, hangup, newCall, retryConnection } =
     useTelnyxClient(agent.id, liveAgent?.status ?? agent.status);
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -94,17 +94,27 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
         {/* Connection state */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {connectionState === 'connecting' && (
-            <div className="connection-banner connection-banner--connecting">
-              <span className="spinner" aria-hidden="true" />
-              Connecting WebRTC…
-            </div>
-          )}
-          {connectionState === 'error' && (
-            <div className="connection-banner connection-banner--error">
-              ⚠ WebRTC connection error
-            </div>
-          )}
+          <div className="connection-status-container">
+            {connectionState === 'connecting' && (
+              <div className="status-toast status-toast--connecting">
+                <span className="spinner spinner-sm" aria-hidden="true" />
+                <span>Connecting WebRTC…</span>
+              </div>
+            )}
+            {connectionState === 'error' && (
+              <div className="status-toast status-toast--error">
+                <span style={{ fontSize: 16 }}>⚠</span>
+                <span style={{ flex: 1 }}>WebRTC connection error</span>
+                <button 
+                  className="btn btn-primary" 
+                  style={{ padding: '4px 10px', fontSize: 12, height: 26 }}
+                  onClick={retryConnection}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+          </div>
 
           <div
             className="agent-card"
@@ -153,7 +163,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
       {/* ── Status error banner ── */}
       {statusError && (
-        <div className="connection-banner connection-banner--error" role="alert">
+        <div className="status-toast status-toast--error" style={{ position: 'fixed', top: 60, left: '50%', transform: 'translateX(-50%)', zIndex: 100 }} role="alert">
           {statusError}
         </div>
       )}
@@ -230,11 +240,13 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                         </td>
                         <td style={{ padding: '12px 16px', fontFamily: 'monospace' }}>{lead.phone_number}</td>
                         <td style={{ padding: '12px 16px' }}>
-                          <span className={`status-badge status-badge--${lead.status}`}>{lead.status}</span>
+                          <span className={`pill-chip pill-chip--${lead.status}`}>
+                            {lead.status}
+                          </span>
                         </td>
                         <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                           <button 
-                            className="btn btn-primary" 
+                            className="btn btn-primary btn-dial" 
                             style={{ padding: '4px 12px', fontSize: 13 }}
                             disabled={connectionState !== 'ready' || displayAgent.status === 'on_call' || displayAgent.status === 'dialing' || displayAgent.status === 'wrap_up'}
                             onClick={() => handleManualCall(lead.phone_number, lead.id)}

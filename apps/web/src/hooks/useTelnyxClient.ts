@@ -29,6 +29,7 @@ interface UseTelnyxClientResult {
   unmute: () => void;
   hangup: () => void;
   newCall: (destinationNumber: string, callerNumber?: string) => void;
+  retryConnection: () => void;
 }
 
 export function useTelnyxClient(agentId: string | null, agentStatus?: string): UseTelnyxClientResult {
@@ -136,6 +137,12 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
     }
   }, []);
 
+  const retryConnection = useCallback(() => {
+    if (agentId) {
+      connectClient(agentId);
+    }
+  }, [agentId, connectClient]);
+
   // ── Mount / agentId change ─────────────────────────────────
 
   useEffect(() => {
@@ -227,5 +234,5 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
     };
   }, [activeCall?.sdkCall]);
 
-  return { activeCall, callContext, connectionState, mute, unmute, hangup, newCall };
+  return { activeCall, callContext, connectionState, mute, unmute, hangup, newCall, retryConnection };
 }

@@ -40,6 +40,12 @@ async function request<T>(
   });
 
   if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem('auth_token');
+      window.location.href = '/login';
+      throw new Error('Unauthorized: Session expired');
+    }
+
     let errorMessage = `HTTP ${res.status}`;
     try {
       const body = await res.json();
