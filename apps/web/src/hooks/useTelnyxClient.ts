@@ -105,7 +105,10 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
 
       client.on('telnyx.error', (err: any) => {
         console.error('[webrtc] telnyx.error:', err);
-        if (err?.code === -32002 || err?.error?.includes('BYE_SEND_FAILED') || err?.message?.includes('CALL DOES NOT EXIST')) {
+        const errStr = typeof err?.error === 'string' ? err.error : '';
+        const msgStr = typeof err?.message === 'string' ? err.message : '';
+        
+        if (err?.code === -32002 || errStr.includes('BYE_SEND_FAILED') || msgStr.includes('CALL DOES NOT EXIST')) {
           return; // Ignore call already ended errors
         }
         setConnectionState('error');
@@ -303,22 +306,42 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
         console.warn('[webrtc] newCall: client not ready');
         return;
       }
+      if (activeCall) {
+        console.warn('[webrtc] newCall blocked: active call exists locally.');
+        alert('Cannot start a new call: another call is currently active. Please hang up the current call first.');
+        return;
+      }
+
       const e164Dest = formatE164(destinationNumber);
       const e164Caller = formatE164(callerNumber);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const call = (clientRef.current as any).newCall({
-        destinationNumber: e164Dest,
-        callerNumber: e164Caller,
-      });
-      setActiveCall({
-        sdkCall: call,
-        callLogId,
-        leadCallControlId,
-        isMuted: false,
-        isHeld: false,
-      });
+      
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const call = (clientRef.current as any).newCall({
+          destinationNumber: e164Dest,
+          callerNumber: e164Caller,
+        });
+        setActiveCall({
+          sdkCall: call,
+          callLogId,
+          leadCallControlId,
+          isMuted: false,
+          isHeld: false,
+        });
+      } catch (err: any) {
+        console.error('[webrtc] newCall failed to initiate:', err);
+        alert(`Cannot start a new call: ${err.message || 'SDK error'}.`);
+        
+        // Auto-heal logic if SDK is stuck in MULTIPLE_ACTIVE_CALLS_DETECTED
+        if (err.message && err.message.includes('MULTIPLE_ACTIVE_CALLS_DETECTED')) {
+           console.warn('[webrtc] Forcing SDK reconnect to clear stale state.');
+           setConnectionState('connecting');
+           clientRef.current?.disconnect();
+           // The 'telnyx.socket.close' event will fire and automatically reconnect
+        }
+      }
     },
-    [],
+    [activeCall],
   );
 
   // ── Clear active call when SDK call ends + Timeout fallback ──

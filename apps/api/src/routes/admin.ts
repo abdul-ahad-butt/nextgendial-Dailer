@@ -277,6 +277,77 @@ admin.delete('/leads/batch/:id', async (c) => {
   return c.json({ deleted_batch_id: id });
 });
 
+admin.get('/leads', async (c) => {
+  const batchId = c.req.query('batch_id');
+  let query = `
+    SELECT 
+      l.id, l.phone_number, l.first_name, l.last_name, l.status,
+      l.assigned_user_id, u.username as assigned_agent_username,
+      l.batch_id, lb.file_name as batch_name
+    FROM leads l
+    LEFT JOIN users u ON l.assigned_user_id = u.id
+    LEFT JOIN lead_batches lb ON l.batch_id = lb.id
+  `;
+  const params: any[] = [];
+  if (batchId) {
+    query += ` WHERE l.batch_id = ?`;
+    params.push(batchId);
+  }
+  query += ` ORDER BY l.id DESC LIMIT 2000`; // Limit to prevent massive payloads
+
+  const { results } = await c.env.DB.prepare(query).bind(...params).all();
+  return c.json({ data: results });
+});
+
+const assignLeadSchema = z.object({
+  lead_id: z.string().min(1),
+  user_id: z.string().nullable(),
+});
+
+admin.patch('/leads/assign', zValidator('json', assignLeadSchema), async (c) => {
+  const { lead_id, user_id } = c.req.valid('json');
+  await c.env.DB.prepare('UPDATE leads SET assigned_user_id = ? WHERE id = ?').bind(user_id, lead_id).run();
+  return c.json({ success: true });
+});
+
+const assignBulkSchema = z.object({
+  lead_ids: z.array(z.string()).min(1),
+  user_id: z.string().nullable(),
+});
+
+admin.patch('/leads/assign-bulk', zValidator('json', assignBulkSchema), async (c) => {
+  const { lead_ids, user_id } = c.req.valid('json');
+  
+  const stmt = c.env.DB.prepare('UPDATE leads SET assigned_user_id = ? WHERE id = ?');
+  const stmts = lead_ids.map((id: string) => stmt.bind(user_id, id));
+  
+  const CHUNK_SIZE = 100;
+  for (let i = 0; i < stmts.length; i += CHUNK_SIZE) {
+    await c.env.DB.batch(stmts.slice(i, i + CHUNK_SIZE));
+  }
+  return c.json({ success: true, count: lead_ids.length });
+});
+
+const distributeSchema = z.object({
+  lead_ids: z.array(z.string()).min(1),
+  user_ids: z.array(z.string()).min(1),
+});
+
+admin.patch('/leads/distribute-randomly', zValidator('json', distributeSchema), async (c) => {
+  const { lead_ids, user_ids } = c.req.valid('json');
+  
+  const stmts = lead_ids.map((id: string) => {
+    const randomUser = user_ids[Math.floor(Math.random() * user_ids.length)];
+    return c.env.DB.prepare('UPDATE leads SET assigned_user_id = ? WHERE id = ?').bind(randomUser, id);
+  });
+  
+  const CHUNK_SIZE = 100;
+  for (let i = 0; i < stmts.length; i += CHUNK_SIZE) {
+    await c.env.DB.batch(stmts.slice(i, i + CHUNK_SIZE));
+  }
+  return c.json({ success: true, count: lead_ids.length });
+});
+
 admin.delete('/leads/:id', async (c) => {
   const id = c.req.param('id');
 

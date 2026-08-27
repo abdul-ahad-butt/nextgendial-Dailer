@@ -181,18 +181,9 @@ export function AdminDashboard() {
           >
             Dashboard
           </button>
-          <button 
-            className="btn btn-ghost"
-            onClick={() => navigate('/admin/agent-status')}
-          >
-            Agent Status
-          </button>
-          <button 
-            className="btn btn-ghost"
-            onClick={() => navigate('/admin/leadsheets')}
-          >
-            Lead Sheets
-          </button>
+          <button className="btn btn-ghost" onClick={() => navigate('/admin/agent-status')}>Agent Status</button>
+          <button className="btn btn-ghost" onClick={() => navigate('/admin/leads')}>Leads</button>
+          <button className="btn btn-ghost" onClick={() => navigate('/admin/leadsheets')}>Lead Sheets</button>
           <button 
             className={`btn ${activeTab === 'numbers' ? 'btn-primary' : 'btn-ghost'}`}
             onClick={() => setActiveTab('numbers')}

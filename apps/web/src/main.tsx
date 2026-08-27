@@ -8,6 +8,7 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { Login } from './pages/Login';
 import { AdminDashboard } from './pages/AdminDashboard';
 import { AdminLeadSheets } from './pages/AdminLeadSheets';
+import { AdminLeads } from './pages/AdminLeads';
 import { AdminRecordings } from './pages/AdminRecordings';
 import { AdminAgentStatus } from './pages/AdminAgentStatus';
 import { AgentDashboard } from './pages/AgentDashboard';
@@ -75,6 +76,7 @@ function App() {
           <Route element={<ProtectedRoute allowedRole="admin" />}>
             <Route path="/admin/recordings" element={<AdminRecordings />} />
             <Route path="/admin/leadsheets" element={<AdminLeadSheets />} />
+            <Route path="/admin/leads" element={<AdminLeads />} />
             <Route path="/admin/agent-status" element={<AdminAgentStatus />} />
             <Route path="/admin/*" element={<AdminDashboard />} />
           </Route>

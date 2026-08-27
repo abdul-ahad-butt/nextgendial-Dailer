@@ -138,6 +138,27 @@ export const api = {
       request<{ deleted_lead_id: string }>(`/admin/leads/${id}`, {
         method: 'DELETE',
       }),
+      
+    getLeads: (batchId?: string) =>
+      request<{ data: any[] }>(`/admin/leads${batchId ? `?batch_id=${batchId}` : ''}`).then((r) => r.data),
+
+    assignLead: (lead_id: string, user_id: string | null) =>
+      request<{ success: boolean }>('/admin/leads/assign', {
+        method: 'PATCH',
+        body: JSON.stringify({ lead_id, user_id }),
+      }),
+
+    assignBulkLeads: (lead_ids: string[], user_id: string | null) =>
+      request<{ success: boolean; count: number }>('/admin/leads/assign-bulk', {
+        method: 'PATCH',
+        body: JSON.stringify({ lead_ids, user_id }),
+      }),
+
+    distributeLeadsRandomly: (lead_ids: string[], user_ids: string[]) =>
+      request<{ success: boolean; count: number }>('/admin/leads/distribute-randomly', {
+        method: 'PATCH',
+        body: JSON.stringify({ lead_ids, user_ids }),
+      }),
 
     getNumbers: () =>
       request<{ data: any[] }>('/admin/numbers').then((r) => r.data),

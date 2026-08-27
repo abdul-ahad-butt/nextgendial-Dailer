@@ -60,6 +60,12 @@ export function AdminRecordings() {
           </button>
           <button 
             className="btn btn-ghost"
+            onClick={() => navigate('/admin/leads')}
+          >
+            Leads
+          </button>
+          <button 
+            className="btn btn-ghost"
             onClick={() => navigate('/admin/leadsheets')}
           >
             Lead Sheets

@@ -80,6 +80,12 @@ export function AdminLeadSheets() {
             Agent Status
           </button>
           <button 
+            className="btn btn-ghost"
+            onClick={() => navigate('/admin/leads')}
+          >
+            Leads
+          </button>
+          <button 
             className="btn btn-primary"
           >
             Lead Sheets
