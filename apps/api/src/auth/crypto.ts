@@ -47,21 +47,83 @@ function hexToBuffer(hex: string): ArrayBuffer {
 }
 
 // ── Password Hashing ──────────────────────────────────────────
+//
+// Format: "<16-byte-salt-as-hex>:<32-byte-PBKDF2-hash-as-hex>"
+// PBKDF2 params: SHA-256, 100 000 iterations, 256-bit output.
+//
+// verifyPassword also accepts the legacy plain-SHA-256 format
+// (a 64-char hex string with no colon) so that any accounts
+// hashed before this change can still log in; auth.ts's
+// auto-migration block will upgrade them on the next successful
+// login.
 
 export async function hashPassword(pwd: string): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pwd));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(pwd),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  );
+
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: 100_000 },
+    keyMaterial,
+    256,
+  );
+
+  const saltHex = bufferToHex(salt.buffer as ArrayBufferLike);
+  const hashHex = bufferToHex(bits);
+  return `${saltHex}:${hashHex}`;
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const newHash = await hashPassword(password);
-  
-  // Timing safe comparison approximation for hex strings
-  if (newHash.length !== stored.length) return false;
-  
+  // ── PBKDF2 path ───────────────────────────────────────────
+  if (stored.includes(':')) {
+    const colonIdx = stored.indexOf(':');
+    const saltHex = stored.slice(0, colonIdx);
+    const storedHashHex = stored.slice(colonIdx + 1);
+
+    if (!saltHex || !storedHashHex) return false;
+
+    const salt = hexToBuffer(saltHex);
+
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      new TextEncoder().encode(password),
+      'PBKDF2',
+      false,
+      ['deriveBits'],
+    );
+
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-256', salt: new Uint8Array(salt), iterations: 100_000 },
+      keyMaterial,
+      256,
+    );
+
+    const derivedHex = bufferToHex(bits);
+
+    // Timing-safe comparison of the hash half only
+    if (derivedHex.length !== storedHashHex.length) return false;
+    let mismatch = 0;
+    for (let i = 0; i < derivedHex.length; i++) {
+      mismatch |= derivedHex.charCodeAt(i) ^ storedHashHex.charCodeAt(i);
+    }
+    return mismatch === 0;
+  }
+
+  // ── Legacy SHA-256 fallback (plain 64-char hex, no salt) ──
+  // Used only to allow login while a hash upgrade is pending.
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password));
+  const legacyHash = bufferToHex(buf);
+
+  if (legacyHash.length !== stored.length) return false;
   let mismatch = 0;
-  for (let i = 0; i < newHash.length; i++) {
-    mismatch |= newHash.charCodeAt(i) ^ stored.charCodeAt(i);
+  for (let i = 0; i < legacyHash.length; i++) {
+    mismatch |= legacyHash.charCodeAt(i) ^ stored.charCodeAt(i);
   }
   return mismatch === 0;
 }

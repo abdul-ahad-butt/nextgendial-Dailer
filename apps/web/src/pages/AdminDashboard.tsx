@@ -111,7 +111,10 @@ export function AdminDashboard() {
 
     const assignedUserId = selectedAgentId === 'pool' ? null : (selectedAgentId === 'me' && user ? user.sub : selectedAgentId);
     
-    const result = await api.admin.uploadLeads(assignedUserId, file!.name, parsedLeads);
+    // Default assignment_mode is 'assigned'. If 'pool' was selected, mode is 'pool'.
+    const assignmentMode = selectedAgentId === 'pool' ? 'pool' : 'assigned';
+    
+    const result = await api.admin.uploadLeads(assignedUserId, file!.name, parsedLeads, assignmentMode);
     setUploadResult(result);
     setFile(null); // Reset file
     setUploading(false);

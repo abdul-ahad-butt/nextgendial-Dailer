@@ -112,10 +112,11 @@ const uploadLeadsSchema = z.object({
     first_name: z.string().optional(),
     last_name: z.string().optional(),
   })).default([]),
+  assignment_mode: z.enum(['assigned', 'pool']).default('assigned'),
 });
 
 admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => {
-  const { assigned_user_id, file_name, leads } = c.req.valid('json');
+  const { assigned_user_id, file_name, leads, assignment_mode } = c.req.valid('json');
   const requestingAdminId = c.get('userId');
 
   // Auto-Initialization Safeguard
@@ -126,7 +127,8 @@ admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => 
         file_name TEXT NOT NULL,
         total_leads INTEGER NOT NULL DEFAULT 0,
         assigned_user_id TEXT REFERENCES users(id),
-        uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+        uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+        assignment_mode TEXT NOT NULL DEFAULT 'assigned' CHECK (assignment_mode IN ('assigned', 'pool'))
       )
     `)
   ]);
@@ -179,11 +181,11 @@ admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => 
     
     // The first statement of the first chunk will be the batch creation
     const batchCreateStmt = c.env.DB.prepare(
-      `INSERT INTO lead_batches (id, file_name, total_leads, assigned_user_id) VALUES (?, ?, ?, ?)`
-    ).bind(batchId, file_name, validLeads.length, assigned_user_id);
+      `INSERT INTO lead_batches (id, file_name, total_leads, assigned_user_id, assignment_mode) VALUES (?, ?, ?, ?, ?)`
+    ).bind(batchId, file_name, validLeads.length, assigned_user_id, assignment_mode);
     
     const leadInsertStmt = c.env.DB.prepare(
-      `INSERT INTO leads (id, assigned_user_id, batch_id, phone_number, first_name, last_name, status)
+      `INSERT OR IGNORE INTO leads (id, assigned_user_id, batch_id, phone_number, first_name, last_name, status)
        VALUES (?, ?, ?, ?, ?, ?, 'pending')`
     );
 
@@ -202,8 +204,8 @@ admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => 
   } else {
     // If no valid leads, still create the empty batch to be consistent
     await c.env.DB.prepare(
-      `INSERT INTO lead_batches (id, file_name, total_leads, assigned_user_id) VALUES (?, ?, 0, ?)`
-    ).bind(batchId, file_name, assigned_user_id).run();
+      `INSERT INTO lead_batches (id, file_name, total_leads, assigned_user_id, assignment_mode) VALUES (?, ?, 0, ?, ?)`
+    ).bind(batchId, file_name, assigned_user_id, assignment_mode).run();
   }
 
   return c.json({
@@ -223,7 +225,8 @@ admin.get('/leads/batches', async (c) => {
         file_name TEXT NOT NULL,
         total_leads INTEGER NOT NULL DEFAULT 0,
         assigned_user_id TEXT REFERENCES users(id),
-        uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+        uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+        assignment_mode TEXT NOT NULL DEFAULT 'assigned' CHECK (assignment_mode IN ('assigned', 'pool'))
       )
     `)
   ]);
@@ -240,6 +243,7 @@ admin.get('/leads/batches', async (c) => {
        lb.file_name, 
        lb.total_leads, 
        lb.uploaded_at, 
+       lb.assignment_mode,
        u.username as assigned_agent_username,
        SUM(CASE WHEN l.status != 'pending' THEN 1 ELSE 0 END) as dialed_count,
        SUM(CASE WHEN l.status = 'completed' THEN 1 ELSE 0 END) as completed_count,
@@ -358,8 +362,14 @@ admin.post('/numbers/assign', zValidator('json', assignNumberSchema), async (c) 
 });
 
 admin.get('/agent-status', async (c) => {
+  // No role filter — include admins who actively use the dialer
   const { results } = await c.env.DB.prepare(`
-    SELECT u.id as user_id, u.username, a.status, a.changed_at 
+    SELECT
+      u.id        AS user_id,
+      u.username,
+      u.role,
+      COALESCE(a.status, 'offline') AS status,
+      a.changed_at
     FROM users u
     LEFT JOIN agent_status a ON u.id = a.user_id
     WHERE u.role = 'agent'
@@ -370,23 +380,30 @@ admin.get('/agent-status', async (c) => {
 });
 
 admin.get('/agents/work-summary', async (c) => {
+  // No role filter — include admins who actively use the dialer
   const { results } = await c.env.DB.prepare(
-    `SELECT 
-       u.id as agent_id,
+    `SELECT
+       u.id                                                          AS agent_id,
        u.username,
-       COALESCE(a.status, 'offline') as status,
-       COALESCE(al.total_active_seconds, 0) as total_active_seconds,
-       COALESCE(al.total_break_seconds, 0) as total_break_seconds,
-       COALESCE(al.total_calls_made, 0) as total_calls_made,
-       COALESCE(al.total_talk_time_seconds, 0) as total_talk_time_seconds,
-       l.phone_number as live_call_destination,
-       (strftime('%s', 'now') - strftime('%s', cl.started_at)) as live_call_duration
+       u.role,
+       COALESCE(a.status, 'offline')                                AS status,
+       COALESCE(al.total_active_seconds, 0)                         AS total_active_seconds,
+       COALESCE(al.total_break_seconds, 0)                          AS total_break_seconds,
+       COALESCE(al.total_calls_made, 0)                             AS total_calls_made,
+       COALESCE(al.total_talk_time_seconds, 0)                      AS total_talk_time_seconds,
+       l.phone_number                                               AS live_call_destination,
+       (strftime('%s', 'now') - strftime('%s', COALESCE(cl.start_time, cl.started_at))) AS live_call_duration
      FROM users u
-     LEFT JOIN agent_status a ON u.id = a.user_id
-     LEFT JOIN agent_activity_logs al ON u.id = al.agent_id AND al.date = date('now')
-     LEFT JOIN call_logs cl ON u.id = cl.agent_id AND cl.ended_at IS NULL AND cl.status NOT IN ('completed', 'failed', 'no_answer', 'busy', 'voicemail')
+     LEFT JOIN agent_status a  ON u.id = a.user_id
+     LEFT JOIN agent_activity_logs al
+            ON u.id = al.agent_id AND al.date = date('now')
+     LEFT JOIN call_logs cl
+            ON u.id = cl.agent_id
+           AND (cl.ended_at IS NULL AND cl.end_time IS NULL)
+           AND cl.status NOT IN ('completed', 'failed', 'no_answer', 'busy', 'voicemail')
      LEFT JOIN leads l ON cl.lead_id = l.id
-     WHERE u.role = 'agent'`
+     WHERE u.role = 'agent'
+     ORDER BY u.created_at DESC`
   ).all();
 
   return c.json({ data: results });

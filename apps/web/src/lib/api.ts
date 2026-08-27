@@ -120,10 +120,10 @@ export const api = {
         body: JSON.stringify(data),
       }).then((r) => r.data),
 
-    uploadLeads: (assigned_user_id: string | null, file_name: string, leads: any[]) =>
+    uploadLeads: (assigned_user_id: string | null, file_name: string, leads: any[], assignment_mode: string = 'assigned') =>
       request<{ batch_id: string; inserted: number; skipped: number; errors: string[] }>('/admin/leads/upload', {
         method: 'POST',
-        body: JSON.stringify({ assigned_user_id, file_name, leads }),
+        body: JSON.stringify({ assigned_user_id, file_name, leads, assignment_mode }),
       }),
 
     getBatches: () =>

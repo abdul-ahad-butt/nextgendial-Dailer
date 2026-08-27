@@ -85,7 +85,10 @@ export function AdminAgentStatus() {
           {loading ? (
             <div style={{ padding: 24, textAlign: 'center' }}><span className="spinner" /></div>
           ) : workSummary.length === 0 ? (
-            <p className="text-muted text-sm" style={{ textAlign: 'center' }}>No agents found.</p>
+            <div style={{ textAlign: 'center', padding: '48px 24px' }}>
+              <p className="text-muted" style={{ marginBottom: 8 }}>No agents found.</p>
+              <p className="text-muted text-sm">Create an agent in the Dashboard to see them here.</p>
+            </div>
           ) : (
             <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>

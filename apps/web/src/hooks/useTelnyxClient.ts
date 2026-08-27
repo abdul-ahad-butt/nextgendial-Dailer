@@ -85,7 +85,18 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
       }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const client = new TelnyxRTC({ login_token: token } as any);
+      const client = new TelnyxRTC({
+        login_token: token,
+        // STUN servers let ICE gather server-reflexive candidates so calls
+        // can traverse NAT. Without this, only host (local) candidates are
+        // gathered and the call stalls at CONNECTING on any non-LAN network
+        // (Warning 33005: "Only local network candidates available").
+        iceServers: [
+          { urls: 'stun:stun.telnyx.com:3478' },
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+        ],
+      } as any);
       clientRef.current = client;
 
       client.on('telnyx.ready', () => {
