@@ -40,7 +40,8 @@ export function ActiveCallPanel({
 
   if (!isOnCall && !isWrapUp) return null;
 
-  const remoteNumber = activeCall?.sdkCall?.options?.remoteCallerNumber 
+  const remoteNumber = activeCall?.destinationNumber
+    || activeCall?.sdkCall?.options?.remoteCallerNumber 
     || activeCall?.sdkCall?.options?.remoteCallerName 
     || 'Unknown';
 

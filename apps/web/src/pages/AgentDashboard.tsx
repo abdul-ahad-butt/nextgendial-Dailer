@@ -207,6 +207,10 @@ export function AgentDashboard({ agent, onLogout }: Props) {
         </div>
       )}
 
+      {/* ── WebRTC Media Elements ── */}
+      <audio id="remote-media" autoPlay />
+      <audio id="local-media" autoPlay muted />
+
       {/* ── Main layout ── */}
       <div className="app-main">
         {/* Sidebar */}

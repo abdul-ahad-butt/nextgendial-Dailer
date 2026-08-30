@@ -25,6 +25,8 @@ export interface ActiveCall {
   /** The Telnyx SDK call object */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sdkCall: any;
+  /** Destination number for outbound calls */
+  destinationNumber: string | null;
   /** Call log ID for context fetching */
   callLogId: string | null;
   /** lead-leg call_control_id, from client_state */

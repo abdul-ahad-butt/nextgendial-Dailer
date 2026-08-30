@@ -47,20 +47,41 @@ auth.post(
       console.log(`[Emergency Fallback] Auto-healing admin account.`);
       const newHash = await hashPassword(sanitizedPassword);
       
-      await c.env.DB.prepare(
-        'INSERT OR REPLACE INTO users (id, username, password_hash, role, status) VALUES (?, ?, ?, ?, ?)'
-      )
-        .bind('admin-id', sanitizedUsername, newHash, 'admin', 'offline')
-        .run();
-      
-      isValid = true;
-      user = {
-        id: 'admin-id',
-        username: sanitizedUsername,
-        password_hash: newHash,
-        role: 'admin',
-        status: 'offline'
-      };
+      try {
+        // ON CONFLICT(id) DO UPDATE performs an in-place update with NO DELETE.
+        // This is critical: INSERT OR REPLACE would DELETE the users row first,
+        // which triggers a FK constraint failure on agent_status.user_id → users(id).
+        await c.env.DB.prepare(`
+          INSERT INTO users (id, username, password_hash, role, status)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            username      = excluded.username,
+            password_hash = excluded.password_hash,
+            role          = excluded.role,
+            status        = CASE WHEN users.status = 'offline' THEN 'offline' ELSE users.status END
+        `)
+          .bind('admin-id', sanitizedUsername, newHash, 'admin', 'offline')
+          .run();
+        
+        isValid = true;
+        user = {
+          id: 'admin-id',
+          username: sanitizedUsername,
+          password_hash: newHash,
+          role: 'admin',
+          status: 'offline'
+        };
+      } catch (upsertErr: any) {
+        // Log clearly which constraint failed so it's diagnosable from worker logs.
+        const msg = upsertErr?.message ?? String(upsertErr);
+        console.error(
+          `[Emergency Fallback] users upsert failed. ` +
+          `If this is a FOREIGN KEY error, check tables referencing users(id) ` +
+          `(e.g. agent_status.user_id). Apply migration 0012_fix_agent_status_fk.sql. ` +
+          `Raw error: ${msg}`
+        );
+        return c.json({ success: false, error: 'Internal server error during account auto-heal' }, 500);
+      }
     }
 
     if (!isValid || !user) {

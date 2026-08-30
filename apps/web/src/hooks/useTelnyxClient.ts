@@ -6,10 +6,13 @@
  * Key behaviours:
  *  - On mount: fetches a fresh 24h WebRTC token → constructs TelnyxRTC
  *    → calls client.connect().
- *  - On incoming call with leg='agent' client_state: auto-answers
- *    immediately (no ringing UI — feels like the call "arrives" already live).
+ *  - All call state tracking happens in the client-level telnyx.notification
+ *    handler (not on individual sdkCall objects — the SDK v1.x does NOT emit
+ *    events on call objects; only the client emits them).
+ *  - Inbound calls: immediately surfaces the ringing UI, then async-updates
+ *    the callLogId once the backend log is created.
  *  - On socket drop: refetches a fresh token and reconnects.
- *  - Exposes mute, unmute, hangup, and the current active call object.
+ *  - Exposes mute, unmute, hangup, answer, reject, and the current active call.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -49,6 +52,11 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [callContext, setCallContext] = useState<CallLog | null>(null);
   const [connectionState, setConnectionState] = useState<WebRTCConnectionState>('idle');
+
+  // Refs to track call state for use inside stable callbacks without re-render
+  const activeCallRef = useRef<ActiveCall | null>(null);
+  activeCallRef.current = activeCall;
+  const answeredRef = useRef(false);
 
   // ── Token fetch + client construction ─────────────────────
 
@@ -100,6 +108,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
       clientRef.current = client;
 
       client.on('telnyx.ready', () => {
+        console.log('[webrtc] Client ready — WebRTC connected.');
         setConnectionState('ready');
       });
 
@@ -115,7 +124,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
       });
 
       client.on('telnyx.socket.close', () => {
-        console.warn('[webrtc] socket closed — reconnecting...');
+        console.warn('[webrtc] Socket closed — reconnecting in 3s...');
         setConnectionState('connecting');
         // Refetch a fresh token and reconnect after a short backoff
         setTimeout(() => {
@@ -123,6 +132,15 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
         }, 3000);
       });
 
+      // ─────────────────────────────────────────────────────────────
+      // CLIENT-LEVEL notification handler
+      //
+      // CRITICAL: The Telnyx WebRTC SDK v1.x emits ALL call-state
+      // events (callUpdate, callNew, callDestroyed, etc.) on the
+      // CLIENT object, not on individual call objects. Listening on
+      // sdkCall.on('telnyx.notification', ...) will never fire.
+      // All call state tracking MUST happen here.
+      // ─────────────────────────────────────────────────────────────
       client.on('telnyx.notification', async (notification: unknown) => {
         const n = notification as {
           type?: string;
@@ -130,10 +148,17 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             answer: () => void;
             hangup: () => void;
+            reject: () => void;
             muteAudio: () => void;
             unmuteAudio: () => void;
+            hold?: () => void;
+            unhold?: () => void;
+            dtmf?: (digit: string) => void;
+            state?: string;
+            cause?: string;
+            id?: string;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            options?: { clientState?: string; [key: string]: any };
+            options?: { clientState?: string; remoteCallerName?: string; remoteCallerNumber?: string; [key: string]: any };
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             [key: string]: any;
           };
@@ -141,7 +166,12 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
 
         if (!n.call) return;
 
-        // Decode client_state to identify the leg
+        const callState = n.call.state;
+        const callType = n.type;
+        const callCause = n.call.cause || 'none';
+        console.log(`[webrtc] telnyx.notification — type: ${callType}, state: ${callState}, cause: ${callCause}`);
+
+        // Decode client_state to identify the leg (system-originated calls only)
         let state: ClientState_Partial = {};
         try {
           const rawState = n.call.options?.clientState ?? n.call['client_state'];
@@ -149,67 +179,119 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
             state = JSON.parse(atob(rawState)) as ClientState_Partial;
           }
         } catch {
-          // If there's no client_state, it might be a manual inbound call
+          // Manual inbound call — no client_state is expected
         }
 
-        if (state.leg === 'agent') {
-          // ── System-originated call from the dialer engine ──
-          // Auto-answer immediately — no ring UI
-          n.call.answer();
+        // ── Handle call state transitions for the ACTIVE call ──
+        const currentActive = activeCallRef.current;
 
-          const newActiveCall: ActiveCall = {
-            sdkCall: n.call,
-            callLogId: state.callLogId ?? null,
-            leadCallControlId: state.leadId ?? null, // We'll resolve the actual ccid below
-            isMuted: false,
-            isHeld: false,
-          };
-          setActiveCall(newActiveCall);
+        if (callState === 'ringing' || callType === 'callUpdate' && callState === 'ringing') {
+          // Inbound call arriving — show ringing UI immediately
+          if (state.leg === 'agent') {
+            // System-originated agent leg — auto-answer
+            console.log('[webrtc] System agent-leg call ringing — auto-answering...');
+            n.call.answer();
 
-          // Fetch context: lead name, phone, campaign script
-          // We look up the call log by callLogId to get lead info
-          if (state.callLogId) {
-            try {
-              const log = await api.calls.get(state.callLogId);
-              setCallContext(log);
-            } catch (err) {
-              console.warn('[webrtc] Failed to fetch call context:', err);
+            const newActiveCall: ActiveCall = {
+              sdkCall: n.call,
+              destinationNumber: null,
+              callLogId: state.callLogId ?? null,
+              leadCallControlId: state.leadId ?? null,
+              isMuted: false,
+              isHeld: false,
+            };
+            setActiveCall(newActiveCall);
+            answeredRef.current = false;
+
+            if (state.callLogId) {
+              try {
+                const log = await api.calls.get(state.callLogId);
+                setCallContext(log);
+              } catch (err) {
+                console.warn('[webrtc] Failed to fetch call context:', err);
+              }
             }
-          }
-        } else if (n.type === 'callUpdate' && n.call.state === 'ringing') {
-          // ── Inbound call ──
-          // Wait, the SDK creates a new notification for ringing. We don't auto-answer.
-          
-          const incomingCall = n.call;
-          // Let's create an active call in 'ringing' state so UI can show it
-          setActiveCall((prev) => {
-            if (prev) return prev; // If already on a call, ignore or the SDK might busy it out
-            
-            // Log inbound call to our backend (we don't have a callLogId yet)
-            api.calls.logManual({ 
-              agentId: id, 
-              phoneNumber: incomingCall.options?.remoteCallerName || incomingCall.options?.remoteCallerNumber || 'Unknown',
+          } else if (!currentActive) {
+            // Manual inbound call — surface ringing UI immediately
+            console.log('[webrtc] Inbound call ringing — surfacing UI...');
+            const callerNumber = n.call.options?.remoteCallerNumber || n.call.options?.remoteCallerName || 'Unknown';
+
+            // Set the active call NOW so the ringing UI appears immediately
+            const provisionalCall: ActiveCall = {
+              sdkCall: n.call,
+              destinationNumber: callerNumber,
+              callLogId: null, // Will be updated once log is created
+              leadCallControlId: null,
+              isMuted: false,
+              isHeld: false,
+            };
+            setActiveCall(provisionalCall);
+            answeredRef.current = false;
+
+            // Create backend log async — update callLogId when done
+            api.calls.logManual({
+              agentId: id,
+              phoneNumber: callerNumber,
               direction: 'inbound'
             })
               .then(logRes => {
-                setActiveCall({
-                  sdkCall: incomingCall,
-                  callLogId: logRes?.id ?? null,
-                  leadCallControlId: null,
-                  isMuted: false,
-                  isHeld: false,
-                });
-                
-                // Set call context to show the caller info
-                setCallContext(logRes ?? null);
+                if (logRes?.id) {
+                  setActiveCall(prev => prev ? { ...prev, callLogId: logRes.id } : null);
+                  setCallContext(logRes ?? null);
+                }
               })
-              .catch(console.error);
-              
-            return null; // temporary until log is created
-          });
+              .catch(err => console.error('[webrtc] Failed to log inbound call:', err));
+          }
+          return;
         }
-        // Manual outbound calls (initiated from the dialpad) are handled
-        // by newCall() below — they don't have an agent leg client_state.
+
+        // For all other state changes, we need to match the notification to our activeCall
+        if (!currentActive) return;
+
+        if (callState === 'active' || callState === 'answered' || callType === 'callUpdate' && (callState === 'active' || callState === 'answered')) {
+          console.log('[webrtc] Call ACTIVE — audio should be flowing.');
+          if (!answeredRef.current) {
+            answeredRef.current = true;
+            if (currentActive.callLogId) {
+              api.calls.update(currentActive.callLogId, { status: 'answered' }).catch(console.error);
+            }
+          }
+          return;
+        }
+
+        if (callState === 'done' || callState === 'destroy' || callState === 'hangup') {
+          console.log(`[webrtc] Call ended. State: ${callState}, Cause: ${callCause}, WasAnswered: ${answeredRef.current}`);
+          if (currentActive.callLogId) {
+            const finalStatus = answeredRef.current ? 'completed' : 'failed';
+            api.calls.update(currentActive.callLogId, {
+              status: finalStatus,
+              end_time: new Date().toISOString()
+            }).catch(console.error);
+          }
+          if (currentActive.leadCallControlId) {
+            api.leads.updateStatus(
+              currentActive.leadCallControlId,
+              answeredRef.current ? 'completed' : 'failed'
+            ).catch(console.error);
+          }
+          answeredRef.current = false;
+          setActiveCall(null);
+          // Don't clear callContext here — ActiveCallBar keeps it until
+          // the agent's status flips out of wrap_up via polling
+          return;
+        }
+
+        if (callState === 'new' || callState === 'requesting' || callState === 'connecting') {
+          // Outbound call just initiated — update activeCall with the real sdkCall object
+          // The sdkCall from newCall() might be a different object reference
+          console.log(`[webrtc] Outbound call state: ${callState} — waiting for far-end answer...`);
+          return;
+        }
+
+        if (callType === 'telnyx.error' || (n as any)?.type === 'error') {
+          const errMsg = (n as any)?.error?.message || (n as any)?.message || 'Unknown SDK error';
+          console.error(`[webrtc] Call error notification: ${errMsg}`, n);
+        }
       });
 
       client.connect();
@@ -261,21 +343,26 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
   }, [activeCall]);
 
   const hangup = useCallback(() => {
+    console.log('[webrtc] hangup() called by user.');
     try {
       activeCall?.sdkCall?.hangup?.();
     } catch (e) {
-      console.warn('[webrtc] hangup error ignored:', e);
+      console.warn('[webrtc] hangup error ignored (call may already be gone):', e);
     }
+    answeredRef.current = false;
     setActiveCall(null);
     setCallContext(null);
   }, [activeCall]);
 
   const answer = useCallback(() => {
+    console.log('[webrtc] answer() called — answering inbound call.');
     activeCall?.sdkCall?.answer?.();
   }, [activeCall]);
 
   const reject = useCallback(() => {
+    console.log('[webrtc] reject() called — rejecting inbound call.');
     activeCall?.sdkCall?.reject?.();
+    answeredRef.current = false;
     setActiveCall(null);
     setCallContext(null);
   }, [activeCall]);
@@ -306,7 +393,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
         console.warn('[webrtc] newCall: client not ready');
         return;
       }
-      if (activeCall) {
+      if (activeCallRef.current) {
         console.warn('[webrtc] newCall blocked: active call exists locally.');
         alert('Cannot start a new call: another call is currently active. Please hang up the current call first.');
         return;
@@ -314,113 +401,92 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
 
       const e164Dest = formatE164(destinationNumber);
       const e164Caller = formatE164(callerNumber);
-      
+
+      console.log(`[webrtc] newCall → dest: ${e164Dest}, caller: ${e164Caller}, callLogId: ${callLogId}`);
+
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const call = (clientRef.current as any).newCall({
           destinationNumber: e164Dest,
           callerNumber: e164Caller,
+          callerName: 'NextGenDial Agent',
+          remoteElement: 'remote-media',
+          localElement: 'local-media',
         });
+
+        answeredRef.current = false;
         setActiveCall({
           sdkCall: call,
+          destinationNumber: e164Dest,
           callLogId,
           leadCallControlId,
           isMuted: false,
           isHeld: false,
         });
+
+        console.log(`[webrtc] Outbound call initiated to ${e164Dest}. Waiting for telnyx.notification events on client...`);
       } catch (err: any) {
         console.error('[webrtc] newCall failed to initiate:', err);
         alert(`Cannot start a new call: ${err.message || 'SDK error'}.`);
-        
+
         // Auto-heal logic if SDK is stuck in MULTIPLE_ACTIVE_CALLS_DETECTED
         if (err.message && err.message.includes('MULTIPLE_ACTIVE_CALLS_DETECTED')) {
-           console.warn('[webrtc] Forcing SDK reconnect to clear stale state.');
-           setConnectionState('connecting');
-           clientRef.current?.disconnect();
-           // The 'telnyx.socket.close' event will fire and automatically reconnect
+          console.warn('[webrtc] MULTIPLE_ACTIVE_CALLS_DETECTED — forcing SDK reconnect to clear stale state.');
+          setConnectionState('connecting');
+          clientRef.current?.disconnect();
+          // The 'telnyx.socket.close' event will fire and automatically reconnect
         }
       }
     },
-    [activeCall],
+    [],  // No dependency on activeCall — uses activeCallRef instead to avoid stale closure
   );
 
-  // ── Clear active call when SDK call ends + Timeout fallback ──
-
+  // ── Stale call safety net ──────────────────────────────────
+  //
+  // If the call is stuck in new/connecting for more than 15 seconds
+  // (i.e. the client never received a state-change notification) we
+  // time out and clean up.  We specifically do NOT time out 'ringing'
+  // because that is a valid pre-answer state that can last as long as
+  // the remote phone rings.
   useEffect(() => {
     if (!activeCall?.sdkCall) return;
 
     const sdkCall = activeCall.sdkCall;
-    let answered = false;
-    let connectionTimeout: any = null;
+    const initialState = sdkCall.state;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const handleEnd = () => {
-      if (connectionTimeout) clearTimeout(connectionTimeout);
-      setActiveCall(null);
-      // Don't clear callContext here — ActiveCallBar keeps it until
-      // the agent's status flips out of wrap_up via polling
-    };
+    if (!['new', 'requesting', 'connecting'].includes(initialState)) return;
 
-    // 10s timeout fallback if stuck in new/connecting/ringing
-    if (['new', 'connecting', 'ringing'].includes(sdkCall.state)) {
-      connectionTimeout = setTimeout(() => {
-        if (['new', 'connecting', 'ringing'].includes(sdkCall.state)) {
-          console.error('[webrtc] Call connection timed out (10s) without connecting to media.');
-          
-          if (activeCall.callLogId) {
-            api.calls.update(activeCall.callLogId, { status: 'failed', end_time: new Date().toISOString() }).catch(console.error);
-          }
-          if (activeCall.leadCallControlId) {
-            // Reset lead status to pending so it can be retried later
-            api.leads.updateStatus(activeCall.leadCallControlId, 'pending').catch(console.error);
-          }
-          
-          try { sdkCall.hangup?.(); } catch (e) {}
-          handleEnd();
-          
-          // Force a reconnect if the socket might be dead
-          retryConnection();
-        }
-      }, 10000);
-    }
+    console.log(`[webrtc] Starting 15s connection timeout for call in state: ${initialState}`);
 
-    sdkCall.on?.('telnyx.notification', (n: { type?: string }) => {
-      if (n?.type === 'callUpdate') {
-        const state = sdkCall.state;
-        
-        // If state moved to active, clear the timeout
-        if (state === 'active' || state === 'answered') {
-          if (connectionTimeout) {
-            clearTimeout(connectionTimeout);
-            connectionTimeout = null;
-          }
+    const connectionTimeout = setTimeout(() => {
+      const currentState = activeCallRef.current?.sdkCall?.state ?? 'gone';
+      if (['new', 'requesting', 'connecting'].includes(currentState)) {
+        console.error(
+          `[webrtc] Call connection timed out (15s) — still in state '${currentState}'. ` +
+          `Check ICE/STUN config and that the Telnyx TELNYX_CONNECTION_ID is set correctly.`
+        );
+
+        if (activeCallRef.current?.callLogId) {
+          api.calls.update(activeCallRef.current.callLogId, {
+            status: 'failed',
+            end_time: new Date().toISOString()
+          }).catch(console.error);
         }
-        
-        if (!answered && (state === 'active' || state === 'answered')) {
-          answered = true;
-          if (activeCall.callLogId) {
-            api.calls.update(activeCall.callLogId, { status: 'answered' }).catch(console.error);
-          }
+        if (activeCallRef.current?.leadCallControlId) {
+          api.leads.updateStatus(activeCallRef.current.leadCallControlId, 'pending').catch(console.error);
         }
-        
-        if (state === 'done') {
-          if (activeCall.callLogId) {
-            const finalStatus = answered ? 'completed' : 'no-answer';
-            api.calls.update(activeCall.callLogId, { status: finalStatus, end_time: new Date().toISOString() }).catch(console.error);
-          }
-          if (activeCall.leadCallControlId) {
-            api.leads.updateStatus(activeCall.leadCallControlId, answered ? 'completed' : 'failed').catch(console.error);
-          }
-          handleEnd();
-        }
+
+        try { sdkCall.hangup?.(); } catch (e) {}
+        answeredRef.current = false;
+        setActiveCall(null);
+
+        // Force a reconnect if the socket might be dead
+        retryConnection();
       }
-    });
+    }, 15000);
 
-    return () => {
-      if (connectionTimeout) clearTimeout(connectionTimeout);
-      sdkCall.off?.('telnyx.notification', handleEnd);
-    };
-  }, [activeCall?.sdkCall, activeCall?.callLogId, activeCall?.leadCallControlId, retryConnection]);
+    return () => clearTimeout(connectionTimeout);
+  }, [activeCall?.sdkCall, retryConnection]);
 
   return { activeCall, callContext, connectionState, mute, unmute, toggleHold, sendDTMF, hangup, answer, reject, newCall, retryConnection };
 }
