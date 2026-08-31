@@ -218,6 +218,7 @@ const updateCallSchema = z.object({
   status: z.string().optional(),
   end_time: z.string().optional(),
   duration: z.number().optional(),
+  hangup_cause: z.string().optional(),
 });
 
 calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
@@ -246,8 +247,12 @@ calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
     }
   }
   if (body.duration !== undefined) {
-    updates.push('duration = ?');
+    updates.push('duration_seconds = ?'); // Mapped duration to duration_seconds to match DB schema
     values.push(body.duration);
+  }
+  if (body.hangup_cause) {
+    updates.push('hangup_cause = ?');
+    values.push(body.hangup_cause);
   }
   
   if (updates.length > 0) {

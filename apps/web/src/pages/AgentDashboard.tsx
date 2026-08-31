@@ -30,29 +30,40 @@ interface Props {
 
 export function AgentDashboard({ agent, onLogout }: Props) {
   const { currentStatus, changedAt, setStatus, error: statusError } = useAgentStatus();
-  const { activeCall, callContext, connectionState, mute, unmute, toggleHold, sendDTMF, hangup, answer, reject, newCall, retryConnection } =
+  const { activeCall, callContext, connectionState, mute, unmute, toggleHold, sendDTMF, hangup, answer, reject, newCall, retryConnection, lastFailedCall } =
     useTelnyxClient(agent.id, currentStatus);
 
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [showDisposition, setShowDisposition] = useState(false);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(true);
+  const [isAutoDialEnabled, setIsAutoDialEnabled] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   // callerId: null means no phone number assigned to this agent
   const [callerId, setCallerId] = useState<string | null | undefined>(undefined); // undefined = loading
+  const [dialingLeadId, setDialingLeadId] = useState<string | null>(null);
+  const [sessionTotal, setSessionTotal] = useState(0);
+  const [sessionDialed, setSessionDialed] = useState(0);
 
   // Fetch campaigns for script lookup + caller ID
   useEffect(() => {
     api.campaigns.list().then(setCampaigns).catch(console.error);
-    fetchLeads();
+    fetchLeads(true);
     api.agent.getCallerId()
       .then((id) => setCallerId(id ?? null))
       .catch(() => setCallerId(null));
   }, []);
 
-  const fetchLeads = () => {
+  const fetchLeads = (isInitial = false) => {
     setLoadingLeads(true);
-    api.leads.list({ status: 'pending' })
-      .then(res => setLeads(res.data))
+    api.leads.list({ status: 'pending,calling' })
+      .then(res => {
+        setLeads(res.data);
+        if (isInitial) {
+          setSessionTotal(res.data.length);
+          setSessionDialed(0);
+        }
+      })
       .catch(console.error)
       .finally(() => setLoadingLeads(false));
   };
@@ -63,6 +74,26 @@ export function AgentDashboard({ agent, onLogout }: Props) {
       setShowDisposition(true);
     }
   }, [currentStatus]);
+
+  // Toast for call failures
+  useEffect(() => {
+    if (lastFailedCall) {
+      if (dialingLeadId) {
+        api.leads.updateStatus(dialingLeadId, 'failed').then(() => fetchLeads()).catch(console.error);
+        setDialingLeadId(null);
+      }
+
+      let friendly = lastFailedCall.cause;
+      if (friendly === 'UNALLOCATED_NUMBER') friendly = 'Invalid Number';
+      else if (friendly === 'USER_BUSY') friendly = 'Line Busy';
+      else if (friendly === 'NO_ANSWER') friendly = 'No Answer';
+      else if (friendly === 'NORMAL_CLEARING') friendly = 'Call Ended';
+      
+      setToastMessage(`Call failed: ${friendly}`);
+      const t = setTimeout(() => setToastMessage(null), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [lastFailedCall, dialingLeadId]);
 
   const currentScript =
     callContext?.campaign_id
@@ -84,6 +115,8 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
       // 3. Update the lead status to 'calling'
       if (leadId) {
+        setDialingLeadId(leadId);
+        setSessionDialed(prev => prev + 1);
         await api.leads.updateStatus(leadId, 'calling').catch(console.error);
         fetchLeads();
       }
@@ -93,12 +126,14 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
   const handleDispositionSubmitted = useCallback(() => {
     setShowDisposition(false);
+    setDialingLeadId(null);
     fetchLeads(); // Refresh leads in case one was completed
   }, []);
 
   // Auto-dialer loop
   useEffect(() => {
     if (
+      isAutoDialEnabled &&
       currentStatus === 'available' &&
       connectionState === 'ready' &&
       !activeCall &&
@@ -106,11 +141,14 @@ export function AgentDashboard({ agent, onLogout }: Props) {
     ) {
       const timer = setTimeout(async () => {
         try {
-          const res = await api.leads.list({ status: 'pending' });
-          const nextLead = res.data[0];
-          if (nextLead) {
-            handleManualCall(nextLead.phone_number, nextLead.id);
+          if (leads.length === 0 || !leads.some(l => l.status === 'pending')) {
+            setIsAutoDialEnabled(false);
+            setToastMessage('Auto-Dial stopped: No pending leads available.');
+            setTimeout(() => setToastMessage(null), 5000);
+            return;
           }
+          const nextLead = leads.find(l => l.status === 'pending');
+          if (nextLead) handleManualCall(nextLead.phone_number, nextLead.id);
         } catch (err) {
           console.error('[AutoDialer] Error fetching pending leads:', err);
         }
@@ -118,7 +156,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
       return () => clearTimeout(timer);
     }
-  }, [currentStatus, connectionState, activeCall, showDisposition, handleManualCall]);
+  }, [isAutoDialEnabled, currentStatus, connectionState, activeCall, showDisposition, handleManualCall, leads]);
 
   const displayAgent = agent;
 
@@ -214,6 +252,13 @@ export function AgentDashboard({ agent, onLogout }: Props) {
         </div>
       )}
 
+      {/* ── Toast notification ── */}
+      {toastMessage && (
+        <div className="status-toast status-toast--error" style={{ position: 'fixed', top: 110, left: '50%', transform: 'translateX(-50%)', zIndex: 100, background: 'var(--danger-dim)', border: '1px solid var(--danger)', color: '#fff', padding: '12px 20px', borderRadius: '8px', boxShadow: 'var(--shadow-md)' }} role="alert">
+          {toastMessage}
+        </div>
+      )}
+
       {/* ── WebRTC Media Elements ── */}
       <audio id="remote-media" autoPlay />
       <audio id="local-media" autoPlay muted />
@@ -237,6 +282,23 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
           {/* Status toggle */}
           <AgentStatusToggle status={currentStatus} changedAt={changedAt} onSetStatus={setStatus} />
+
+          {/* Auto-Dial toggle */}
+          <div style={{ padding: '12px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Auto-Dialer</span>
+              <button 
+                className={`btn ${isAutoDialEnabled ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '4px 10px', fontSize: 11, minWidth: 48 }}
+                onClick={() => setIsAutoDialEnabled(!isAutoDialEnabled)}
+              >
+                {isAutoDialEnabled ? 'ON' : 'OFF'}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Automatically dial next pending lead when Available.
+            </div>
+          </div>
 
           {/* Divider */}
           <div style={{ height: 1, background: 'var(--border)' }} role="separator" />
@@ -280,9 +342,60 @@ export function AgentDashboard({ agent, onLogout }: Props) {
           </div>
         </aside>
 
-        {/* Main content */}
         <main className="main-content" id="main-content" style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
-          
+
+          {/* Auto-Dialer Session Panel */}
+          {isAutoDialEnabled && (
+            <section aria-labelledby="autodial-heading">
+              <div className="card" style={{ padding: 20, border: '1px solid var(--primary)', background: 'var(--surface-sunken)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                  <div>
+                    <h2 id="autodial-heading" style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      Auto-Dialer Active
+                    </h2>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                      Dialing session in progress. Stay in <strong>Available</strong> status to continue.
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-ghost"
+                    style={{ color: 'var(--danger)', borderColor: 'var(--danger-dim)' }}
+                    onClick={() => setIsAutoDialEnabled(false)}
+                  >
+                    Stop Auto-Dial
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+                  <div style={{ background: 'var(--bg-elevated)', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Session Progress</div>
+                    <div style={{ fontSize: 24, fontWeight: 600, marginTop: 4 }}>{sessionDialed} <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>/ {sessionTotal}</span></div>
+                  </div>
+                  <div style={{ background: 'var(--bg-elevated)', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Remaining</div>
+                    <div style={{ fontSize: 24, fontWeight: 600, marginTop: 4 }}>{leads.filter(l => l.status === 'pending').length}</div>
+                  </div>
+                  <div style={{ background: 'var(--bg-elevated)', padding: 12, borderRadius: 8, textAlign: 'center' }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current Action</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, marginTop: 8, color: currentStatus === 'available' ? 'var(--primary)' : 'var(--text-secondary)' }}>
+                      {currentStatus === 'available' ? (activeCall ? 'On Call' : 'Waiting/Dialing...') : 'Paused (Not Available)'}
+                    </div>
+                  </div>
+                </div>
+
+                {leads.filter(l => l.status === 'pending').length === 0 && !activeCall && (
+                  <div style={{ textAlign: 'center', padding: '24px 12px', background: 'var(--bg-elevated)', borderRadius: 8 }}>
+                    <h3 style={{ margin: '0 0 8px', fontSize: 15 }}>No Leads Left</h3>
+                    <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>
+                      You have reached the end of your pending leads list. <br/>
+                      Please request more leads or dial manually.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
           <section aria-labelledby="leads-heading">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <h2 id="leads-heading" style={{ fontSize: 14, color: 'var(--text-secondary)', fontWeight: 600, margin: 0 }}>
@@ -316,8 +429,8 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                         </td>
                         <td style={{ padding: '12px 16px', fontFamily: 'monospace' }}>{lead.phone_number}</td>
                         <td style={{ padding: '12px 16px' }}>
-                          <span className={`pill-chip pill-chip--${lead.status}`}>
-                            {lead.status}
+                          <span className={`pill-chip pill-chip--${lead.id === dialingLeadId ? 'calling' : (lead.status === 'calling' ? 'pending' : lead.status)}`}>
+                            {lead.id === dialingLeadId ? 'calling' : (lead.status === 'calling' ? 'pending' : lead.status)}
                           </span>
                         </td>
                         <td style={{ padding: '12px 16px', textAlign: 'right' }}>
@@ -327,9 +440,9 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                             disabled={
                               !callerId ||
                               connectionState !== 'ready' ||
-                              displayAgent.status === 'on_call' ||
-                              displayAgent.status === 'dialing' ||
-                              displayAgent.status === 'wrap_up'
+                              currentStatus === 'on_call' ||
+                              currentStatus === 'dialing' ||
+                              currentStatus === 'wrap_up'
                             }
                             onClick={() => handleManualCall(lead.phone_number, lead.id)}
                             title={

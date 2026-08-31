@@ -18,6 +18,15 @@ leads.get('/', async (c) => {
 
   if (role === 'agent') {
     // Agents can only ever see their own leads.
+    const status = c.req.query('status');
+    if (status) {
+      const statuses = status.split(',');
+      const placeholders = statuses.map(() => '?').join(',');
+      const { results } = await c.env.DB.prepare(
+        `SELECT * FROM leads WHERE assigned_user_id = ? AND status IN (${placeholders}) ORDER BY created_at DESC`
+      ).bind(userId, ...statuses).all();
+      return c.json({ data: results });
+    }
     const { results } = await c.env.DB.prepare(
       'SELECT * FROM leads WHERE assigned_user_id = ? ORDER BY created_at DESC'
     ).bind(userId).all();

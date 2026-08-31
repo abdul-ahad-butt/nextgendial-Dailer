@@ -528,6 +528,32 @@ h3 { font-size: 14px; font-weight: 600; }
   border-color: var(--danger);
 }
 
+.pill-chip--pending { 
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+}
+
+.pill-chip--calling { 
+  background: var(--primary-dim);
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.pill-chip--called, .pill-chip--completed { 
+  background: var(--success-dim);
+  color: var(--success);
+}
+
+.pill-chip--converted { 
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.pill-chip--failed { 
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--text-secondary);

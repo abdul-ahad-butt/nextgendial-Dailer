@@ -45,6 +45,7 @@ interface UseTelnyxClientResult {
   sendDTMF: (digit: string) => void;
   newCall: (destinationNumber: string, callerNumber?: string, callLogId?: string | null, leadCallControlId?: string | null) => void;
   retryConnection: () => void;
+  lastFailedCall: { cause: string; timestamp: number } | null;
 }
 
 export function useTelnyxClient(agentId: string | null, agentStatus?: string): UseTelnyxClientResult {
@@ -52,6 +53,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [callContext, setCallContext] = useState<CallLog | null>(null);
   const [connectionState, setConnectionState] = useState<WebRTCConnectionState>('idle');
+  const [lastFailedCall, setLastFailedCall] = useState<{ cause: string; timestamp: number } | null>(null);
 
   // Refs to track call state for use inside stable callbacks without re-render
   const activeCallRef = useRef<ActiveCall | null>(null);
@@ -280,7 +282,8 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
             const finalStatus = answeredRef.current ? 'completed' : 'failed';
             api.calls.update(currentActive.callLogId, {
               status: finalStatus,
-              end_time: new Date().toISOString()
+              end_time: new Date().toISOString(),
+              hangup_cause: callCause !== 'none' ? callCause : undefined
             }).catch(console.error);
           }
           if (currentActive.leadCallControlId) {
@@ -289,6 +292,11 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
               answeredRef.current ? 'completed' : 'failed'
             ).catch(console.error);
           }
+          
+          if (!answeredRef.current) {
+            setLastFailedCall({ cause: callCause, timestamp: Date.now() });
+          }
+
           answeredRef.current = false;
           setActiveCall(null);
           // Don't clear callContext here — ActiveCallBar keeps it until
@@ -503,5 +511,5 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
     return () => clearTimeout(connectionTimeout);
   }, [activeCall?.sdkCall, retryConnection]);
 
-  return { activeCall, callContext, connectionState, mute, unmute, toggleHold, sendDTMF, hangup, answer, reject, newCall, retryConnection };
+  return { activeCall, callContext, connectionState, mute, unmute, toggleHold, sendDTMF, hangup, answer, reject, newCall, retryConnection, lastFailedCall };
 }

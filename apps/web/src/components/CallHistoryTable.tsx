@@ -88,7 +88,7 @@ export function CallHistoryTable({ agentId }: Props) {
                 <tr key={log.id}>
                   <td className="text-mono text-sm">{formatTs(log.started_at)}</td>
                   <td>
-                    <span style={{ fontSize: 12, textTransform: 'capitalize', color: 'var(--text-secondary)' }}>
+                    <span className={`pill-chip pill-chip--${log.status}`}>
                       {log.status}
                     </span>
                   </td>

@@ -3,6 +3,7 @@ import type { Agent, ActiveCall, CallLog } from '../types';
 
 interface Props {
   agent: Agent;
+  currentStatus: string;
   activeCall: ActiveCall | null;
   callContext: CallLog | null;
   script: string | null;
@@ -17,6 +18,7 @@ interface Props {
 
 export function ActiveCallPanel({
   agent,
+  currentStatus,
   activeCall,
   callContext,
   script,
@@ -28,7 +30,7 @@ export function ActiveCallPanel({
   onAnswer,
   onReject,
 }: Props) {
-  const isWrapUp = agent.status === 'wrap_up' && !activeCall;
+  const isWrapUp = currentStatus === 'wrap_up' && !activeCall;
   const isOnCall = !!activeCall;
   const sdkState = activeCall?.sdkCall?.state || '';
   const isRinging = sdkState === 'ringing' && callContext?.direction === 'inbound';
