@@ -29,6 +29,13 @@
     }
   ],
 
+  "r2_buckets": [
+    {
+      "binding": "RECORDINGS",
+      "bucket_name": "nextgendial-call"
+    }
+  ],
+
   "vars": {
     "APP_BASE_URL": "https://nextgendial-api.abdulahadbutt420.workers.dev",
     "ALLOWED_ORIGIN": "https://nextgendial-web.pages.dev"
