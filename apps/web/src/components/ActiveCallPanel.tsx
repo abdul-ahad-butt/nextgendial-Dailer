@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { ActiveCall, CallLog } from '../types';
 
+import { playDTMF } from '../lib/audio';
+
 interface Props {
   currentStatus: string;
   activeCall: ActiveCall | null;
@@ -99,7 +101,10 @@ export const ActiveCallPanel = React.memo(function ActiveCallPanel({
       {showKeypad && isActive && (
         <div className="keypad-grid">
           {dtmfDigits.map((digit) => (
-            <button key={digit} className="btn-dtmf" onClick={() => onSendDTMF(digit)}>
+            <button key={digit} className="btn-dtmf" onClick={() => {
+              playDTMF(digit);
+              onSendDTMF(digit);
+            }}>
               {digit}
             </button>
           ))}

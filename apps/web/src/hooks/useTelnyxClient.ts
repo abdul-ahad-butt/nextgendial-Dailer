@@ -19,6 +19,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { TelnyxRTC } from '@telnyx/webrtc';
 import type { ActiveCall, CallLog, ClientState } from '../types';
 import { api } from '../lib/api';
+import { playAlert, stopAlert } from '../lib/audio';
 
 function formatE164(phone: string): string {
   if (!phone) return '';
@@ -226,6 +227,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
           } else {
             // Manual inbound call — surface ringing UI immediately
             console.log('[webrtc] Inbound call ringing — surfacing UI...');
+            playAlert('inbound');
             const callerNumber = n.call.options?.remoteCallerNumber || n.call.options?.remoteCallerName || 'Unknown';
 
             // Set the active call NOW so the ringing UI appears immediately
@@ -268,7 +270,9 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
 
         if (callState === 'active' || callState === 'answered' || callType === 'callUpdate' && (callState === 'active' || callState === 'answered')) {
           console.log('[webrtc] Call ACTIVE — audio should be flowing.');
+          stopAlert();
           if (!answeredRef.current) {
+            playAlert('connected');
             answeredRef.current = true;
             if (currentActive.callLogId) {
               api.calls.update(currentActive.callLogId, { status: 'answered' }).catch(console.error);
@@ -279,6 +283,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
 
         if (callState === 'done' || callState === 'destroy' || callState === 'hangup') {
           console.log(`[webrtc] Call ended. State: ${callState}, Cause: ${callCause}, WasAnswered: ${answeredRef.current}`);
+          stopAlert();
           
           let setup_duration_ms: number | undefined;
           let failure_category: string | undefined;
@@ -315,6 +320,7 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
           }
           
           if (!answeredRef.current) {
+            playAlert('failed');
             setLastFailedCall({ 
               cause: callCause, 
               category: failure_category,
@@ -340,6 +346,9 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
           // Outbound call just initiated — update activeCall with the real sdkCall object
           // The sdkCall from newCall() might be a different object reference
           console.log(`[webrtc] Outbound call state: ${callState} — waiting for far-end answer...`);
+          if (callState === 'requesting') {
+            playAlert('ringback');
+          }
           return;
         }
 

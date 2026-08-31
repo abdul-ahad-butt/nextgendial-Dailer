@@ -10,7 +10,8 @@
  *  3. POST /api/calls/manual logs the row with the resulting call_control_id
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useEffect } from 'react';
+import { playDTMF } from '../lib/audio';
 
 interface Props {
   agentId: string;
@@ -39,6 +40,7 @@ export function Dialpad({ agentId: _agentId, onCall, disabled = false }: Props) 
 
   const append = useCallback((digit: string) => {
     setNumber((n) => (n.length < 20 ? n + digit : n));
+    playDTMF(digit);
   }, []);
 
   const backspace = useCallback(() => {
@@ -50,6 +52,26 @@ export function Dialpad({ agentId: _agentId, onCall, disabled = false }: Props) 
     onCall(number);
     // Don't clear — agent may want to re-dial
   }, [number, onCall, disabled]);
+
+  useEffect(() => {
+    if (disabled) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if typing in an input field (though none exist here, good practice)
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      
+      const key = e.key;
+      if (/^[0-9*#]$/.test(key)) {
+        append(key);
+      } else if (key === 'Backspace') {
+        backspace();
+      } else if (key === 'Enter') {
+        handleCall();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [disabled, append, backspace, handleCall]);
 
   return (
     <div className="dialpad" aria-label="Manual dial pad">

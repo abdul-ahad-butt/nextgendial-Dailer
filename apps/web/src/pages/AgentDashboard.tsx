@@ -22,6 +22,7 @@ import { Dialer } from '../components/Dialer';
 import { DispositionModal } from '../components/DispositionModal';
 import { api } from '../lib/api';
 import type { Lead } from '../types';
+import { getAudioMuted, setAudioMuted, initAudioContext } from '../lib/audio';
 
 interface Props {
   agent: Agent;
@@ -45,6 +46,13 @@ export function AgentDashboard({ agent, onLogout }: Props) {
   const [dialingLeadId, setDialingLeadId] = useState<string | null>(null);
   const [sessionTotal, setSessionTotal] = useState(0);
   const [sessionDialed, setSessionDialed] = useState(0);
+  const [isAudioMutedState, setIsAudioMutedState] = useState(() => getAudioMuted());
+
+  const handleToggleMute = useCallback(() => {
+    const newState = !isAudioMutedState;
+    setIsAudioMutedState(newState);
+    setAudioMuted(newState);
+  }, [isAudioMutedState]);
 
   // Fetch campaigns for script lookup + caller ID
   useEffect(() => {
@@ -165,7 +173,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
   const displayAgent = agent;
 
   return (
-    <div className="app-layout">
+    <div className="app-layout" onClick={() => initAudioContext()} onKeyDown={() => initAudioContext()}>
       {/* ── Header ── */}
       <header className="app-header">
         <div className="app-logo">
@@ -303,8 +311,25 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             </div>
           </div>
 
+          {/* Audio Sounds toggle */}
+          <div style={{ padding: '12px', background: 'var(--bg-elevated)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border)', marginTop: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Audio Sounds</span>
+              <button 
+                className={`btn ${!isAudioMutedState ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ padding: '4px 10px', fontSize: 11, minWidth: 48 }}
+                onClick={handleToggleMute}
+              >
+                {!isAudioMutedState ? 'ON' : 'OFF'}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Enable keypad DTMF tones and call alerts.
+            </div>
+          </div>
+
           {/* Divider */}
-          <div style={{ height: 1, background: 'var(--border)' }} role="separator" />
+          <div style={{ height: 1, background: 'var(--border)', margin: '12px 0' }} role="separator" />
 
           {/* Dialer */}
           <div>
