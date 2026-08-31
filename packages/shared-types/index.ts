@@ -12,6 +12,7 @@ export type AgentStatus =
 
 export type LeadStatus =
   | 'pending'
+  | 'calling'
   | 'dialing'
   | 'contacted'
   | 'completed'

@@ -231,7 +231,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
       {/* ── Active Call Panel (Floating) ── */}
       {(activeCall || currentStatus === 'wrap_up' || currentStatus === 'on_call') && (
         <ActiveCallPanel
-          agent={displayAgent}
+          currentStatus={currentStatus}
           activeCall={activeCall}
           callContext={callContext}
           script={currentScript}
@@ -401,7 +401,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
               <h2 id="leads-heading" style={{ fontSize: 14, color: 'var(--text-secondary)', fontWeight: 600, margin: 0 }}>
                 My Leads (Pending)
               </h2>
-              <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={fetchLeads}>
+              <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => fetchLeads()}>
                 Refresh
               </button>
             </div>

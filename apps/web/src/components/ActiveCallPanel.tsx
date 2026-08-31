@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { Agent, ActiveCall, CallLog } from '../types';
 
 interface Props {
-  agent: Agent;
   currentStatus: string;
   activeCall: ActiveCall | null;
   callContext: CallLog | null;
@@ -17,7 +16,6 @@ interface Props {
 }
 
 export function ActiveCallPanel({
-  agent,
   currentStatus,
   activeCall,
   callContext,

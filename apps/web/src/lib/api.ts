@@ -258,7 +258,7 @@ export const api = {
         body: JSON.stringify({ to }),
       }),
       
-    update: (id: string, data: { status?: string; end_time?: string; duration?: number }) =>
+    update: (id: string, data: { status?: string; end_time?: string; duration?: number; hangup_cause?: string }) =>
       request<{ data: CallLog }>(`/calls/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data),
