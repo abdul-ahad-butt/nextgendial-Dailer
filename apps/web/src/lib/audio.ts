@@ -39,10 +39,12 @@ export function getAudioMuted() {
 }
 
 export function playDTMF(digit: string) {
+  console.log('[audio] playDTMF invoked for digit:', digit, 'isAudioMuted:', isAudioMuted);
   if (isAudioMuted) return;
   initAudioContext();
   if (!audioCtx) return;
   
+  console.log('[audio] audioCtx state:', audioCtx.state);
   const freqs = DTMF_FREQS[digit];
   if (!freqs) return;
 
@@ -69,6 +71,8 @@ export function playDTMF(digit: string) {
   osc2.start(audioCtx.currentTime);
   osc1.stop(audioCtx.currentTime + 0.15);
   osc2.stop(audioCtx.currentTime + 0.15);
+
+  console.log('[audio] DTMF tone scheduled for digit:', digit);
 }
 
 export function playAlert(type: 'ringback' | 'connected' | 'failed' | 'inbound') {
