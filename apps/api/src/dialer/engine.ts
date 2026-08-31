@@ -127,6 +127,19 @@ export async function tryDialNextLead(env: Env, agentId: string): Promise<void> 
       telnyx_call_control_id: callControlId,
     });
 
+    // Step 7: Update sticky routing map so inbound callbacks go to this agent
+    try {
+      await env.DB.prepare(`
+        INSERT INTO outbound_call_map (id, agent_id, from_number, to_number, last_call_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(from_number, to_number) DO UPDATE SET
+          agent_id = excluded.agent_id,
+          last_call_at = excluded.last_call_at
+      `).bind(crypto.randomUUID(), agentId, campaign.caller_id_number, lead.phone_number).run();
+    } catch (mapErr: any) {
+      console.warn('[dialer] outbound_call_map upsert failed (non-fatal):', mapErr?.message);
+    }
+
     console.log(
       `[dialer] Dialing lead ${lead.id} (${lead.phone_number}) for agent ${agentId} — ccid: ${callControlId}`,
     );
@@ -160,7 +173,10 @@ export async function handleTelnyxWebhook(
 
   switch (event_type) {
     case 'call.initiated':
-      // No-op: call log already exists from tryDialNextLead
+      // Handle inbound calls with sticky routing
+      if (payload.direction === 'incoming') {
+        await handleInboundCall(env, payload);
+      }
       break;
 
     case 'call.machine.premium.detection.ended':
@@ -506,4 +522,95 @@ async function getCallerIdForCampaign(env: Env, campaignId: string): Promise<str
 
 function nowStr(): string {
   return new Date().toISOString().replace('T', ' ').slice(0, 19);
+}
+
+// ----------------------------------------------------------------
+// Inbound Call Handler (Sticky Routing)
+// ----------------------------------------------------------------
+
+/**
+ * When an inbound call arrives, look up whether the caller has previously
+ * been called by one of our agents from the receiving number. If yes,
+ * route directly to that agent's WebRTC SIP URI (sticky callback routing).
+ * If no match exists, log a warning — general queue routing is a future feature.
+ */
+export async function handleInboundCall(
+  env: Env,
+  payload: TelnyxWebhookEvent['data']['payload'],
+): Promise<void> {
+  const callerNumber = payload.from;     // E.164 number of the person calling in
+  const receivingNumber = payload.to;    // Our Telnyx number that received the call
+  const callControlId = payload.call_control_id;
+
+  if (!callerNumber || !receivingNumber) {
+    console.warn('[inbound] Missing from/to in inbound call payload');
+    return;
+  }
+
+  console.log(`[inbound] Inbound call from ${callerNumber} to ${receivingNumber}`);
+
+  // Look up sticky routing: has this caller been called by one of our agents?
+  const mapping = await env.DB.prepare(`
+    SELECT agent_id, from_number FROM outbound_call_map
+    WHERE to_number = ? AND from_number = ?
+    LIMIT 1
+  `).bind(callerNumber, receivingNumber).first<{ agent_id: string; from_number: string }>();
+
+  if (!mapping) {
+    console.warn(`[inbound] No sticky routing match for ${callerNumber} → ${receivingNumber}. No general queue configured — inbound call will not be answered.`);
+    // Optionally hang up gracefully here — for now Telnyx will timeout
+    return;
+  }
+
+  console.log(`[inbound] Sticky match — routing to agent ${mapping.agent_id}`);
+
+  // Retrieve the agent's SIP username
+  const agent = await getAgentById(env.DB, mapping.agent_id);
+  if (!agent || !agent.telnyx_sip_username) {
+    console.error(`[inbound] Sticky-matched agent ${mapping.agent_id} has no SIP username — cannot route`);
+    return;
+  }
+
+  // Create a call log for this inbound call
+  const callLogId = crypto.randomUUID();
+  const now = nowStr();
+  try {
+    await env.DB.prepare(`
+      INSERT INTO call_logs (id, agent_id, telnyx_call_control_id, direction, status, started_at, start_time, created_at)
+      VALUES (?, ?, ?, 'inbound', 'ringing', ?, ?, ?)
+    `).bind(callLogId, mapping.agent_id, callControlId, now, now, now).run();
+  } catch (logErr: any) {
+    console.error('[inbound] Failed to create inbound call log:', logErr?.message);
+  }
+
+  // Build client_state so the agent's WebRTC client knows this is an inbound leg
+  const agentClientState = encodeClientState({
+    leg: 'agent',
+    leadId: null as any,
+    agentId: mapping.agent_id,
+    campaignId: null as any,
+    callLogId,
+  });
+
+  // Dial the agent's WebRTC SIP URI — their browser will ring
+  try {
+    const agentCallControlId = await dialNumber(env, {
+      to: `sip:${agent.telnyx_sip_username}@sip.telnyx.com`,
+      from: receivingNumber,
+      connectionId: env.TELNYX_CONNECTION_ID,
+      webhookUrl: `${env.APP_BASE_URL}/api/webhooks/telnyx`,
+      clientState: agentClientState,
+    });
+
+    // Bridge the inbound call (caller) to the agent leg
+    await bridgeCalls(env, callControlId, agentCallControlId);
+
+    console.log(`[inbound] Bridged inbound ${callControlId} → agent ${agentCallControlId}`);
+
+    await env.DB.prepare('UPDATE call_logs SET status = ?, agent_leg_call_control_id = ? WHERE id = ?')
+      .bind('bridged', agentCallControlId, callLogId)
+      .run();
+  } catch (dialErr: any) {
+    console.error('[inbound] Failed to dial or bridge agent:', dialErr?.message);
+  }
 }

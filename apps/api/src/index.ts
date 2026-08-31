@@ -17,6 +17,7 @@ import agentRoute from './routes/agent';
 import agentsRoute from './routes/agents';
 import callsRoute from './routes/calls';
 import webhooksRoute from './routes/webhooks';
+import recordingsRoute from './routes/recordings';
 import { mockRoute } from './routes/mock';
 
 const app = new Hono<AppEnv>();
@@ -63,6 +64,7 @@ app.route('/api/agent', agentRoute);
 app.route('/api/agents', agentsRoute);
 app.route('/api/calls', callsRoute);
 app.route('/api/webhooks', webhooksRoute);
+app.route('/api/recordings', recordingsRoute);
 
 // Mock routes to prevent frontend crashes from legacy features
 app.route('/api', mockRoute);

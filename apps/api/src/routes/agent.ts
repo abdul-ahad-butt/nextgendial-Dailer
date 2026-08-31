@@ -14,10 +14,10 @@ agent.get('/caller-id', async (c) => {
   
   const user = await c.env.DB.prepare('SELECT assigned_phone_number FROM users WHERE id = ?')
     .bind(userId)
-    .first<{ assigned_phone_number: string }>();
+    .first<{ assigned_phone_number: string | null }>();
 
-  // Fallback to the default if not assigned
-  const callerId = user?.assigned_phone_number || '+19564461280';
+  // Return null if no number is assigned — frontend uses this to gate dialing
+  const callerId = user?.assigned_phone_number || null;
 
   return c.json({ callerId });
 });

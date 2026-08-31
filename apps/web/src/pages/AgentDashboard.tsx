@@ -37,11 +37,16 @@ export function AgentDashboard({ agent, onLogout }: Props) {
   const [showDisposition, setShowDisposition] = useState(false);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(true);
+  // callerId: null means no phone number assigned to this agent
+  const [callerId, setCallerId] = useState<string | null | undefined>(undefined); // undefined = loading
 
-  // Fetch campaigns for script lookup
+  // Fetch campaigns for script lookup + caller ID
   useEffect(() => {
     api.campaigns.list().then(setCampaigns).catch(console.error);
     fetchLeads();
+    api.agent.getCallerId()
+      .then((id) => setCallerId(id ?? null))
+      .catch(() => setCallerId(null));
   }, []);
 
   const fetchLeads = () => {
@@ -66,14 +71,16 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
   const handleManualCall = useCallback(
     async (number: string, leadId?: string) => {
+      if (!callerId) return; // guard: no number assigned
+
       // 1. Log the manual call to create the call_logs row
       const logRes = await api.calls
         .logManual({ agentId: agent.id, phoneNumber: number, leadId })
         .catch(console.error);
 
-      // 2. Initiate the call with the returned callLogId
+      // 2. Initiate the call using the agent's assigned number as caller ID
       const callLogId = logRes?.id ?? null;
-      newCall(number, '+19564461280', callLogId, leadId || null);
+      newCall(number, callerId, callLogId, leadId || null);
 
       // 3. Update the lead status to 'calling'
       if (leadId) {
@@ -81,7 +88,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
         fetchLeads();
       }
     },
-    [agent.id, newCall],
+    [agent.id, newCall, callerId],
   );
 
   const handleDispositionSubmitted = useCallback(() => {
@@ -237,15 +244,39 @@ export function AgentDashboard({ agent, onLogout }: Props) {
           {/* Dialer */}
           <div>
             <div className="card-title">Manual Dial</div>
-            <Dialer
-              onCall={handleManualCall}
-              disabled={
-                connectionState !== 'ready' ||
-                currentStatus === 'on_call' ||
-                currentStatus === 'dialing' ||
-                currentStatus === 'wrap_up'
-              }
-            />
+            {callerId === undefined ? (
+              // Still loading caller ID
+              <div style={{ padding: '12px 0', color: 'var(--text-muted)', fontSize: 13 }}>
+                <span className="spinner spinner-sm" aria-hidden="true" /> Loading...
+              </div>
+            ) : callerId === null ? (
+              // No number assigned — gate the dialer
+              <div
+                role="alert"
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  background: 'rgba(239,68,68,0.1)',
+                  border: '1px solid rgba(239,68,68,0.3)',
+                  color: '#f87171',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                <strong>No phone number assigned.</strong><br />
+                Contact your admin to assign a number before dialing.
+              </div>
+            ) : (
+              <Dialer
+                onCall={handleManualCall}
+                disabled={
+                  connectionState !== 'ready' ||
+                  currentStatus === 'on_call' ||
+                  currentStatus === 'dialing' ||
+                  currentStatus === 'wrap_up'
+                }
+              />
+            )}
           </div>
         </aside>
 
@@ -293,9 +324,18 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                           <button 
                             className="btn btn-primary btn-dial" 
                             style={{ padding: '4px 12px', fontSize: 13 }}
-                            disabled={connectionState !== 'ready' || displayAgent.status === 'on_call' || displayAgent.status === 'dialing' || displayAgent.status === 'wrap_up'}
+                            disabled={
+                              !callerId ||
+                              connectionState !== 'ready' ||
+                              displayAgent.status === 'on_call' ||
+                              displayAgent.status === 'dialing' ||
+                              displayAgent.status === 'wrap_up'
+                            }
                             onClick={() => handleManualCall(lead.phone_number, lead.id)}
-                            title={connectionState !== 'ready' ? 'WebRTC Not Connected' : ''}
+                            title={
+                              !callerId ? 'No phone number assigned' :
+                              connectionState !== 'ready' ? 'WebRTC Not Connected' : ''
+                            }
                           >
                             Dial
                           </button>

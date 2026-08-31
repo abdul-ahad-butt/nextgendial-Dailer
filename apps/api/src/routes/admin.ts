@@ -481,11 +481,53 @@ admin.get('/agents/work-summary', async (c) => {
 });
 
 admin.get('/call-recordings', async (c) => {
-  // basic implementation, can expand to support query params if needed
-  const { results } = await c.env.DB.prepare(
-    `SELECT * FROM call_recordings ORDER BY created_at DESC LIMIT 100`
-  ).all();
-  return c.json({ data: results });
+  const agentId = c.req.query('agent_id');
+  const date = c.req.query('date'); // e.g. "2025-08-31"
+  const appBaseUrl = c.env.APP_BASE_URL || '';
+
+  const conditions: string[] = [];
+  const params: any[] = [];
+
+  if (agentId) {
+    conditions.push('cr.agent_id = ?');
+    params.push(agentId);
+  }
+  if (date) {
+    conditions.push("date(cr.created_at) = ?");
+    params.push(date);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  const { results } = await c.env.DB.prepare(`
+    SELECT 
+      cr.id,
+      cr.call_control_id,
+      cr.call_log_id,
+      cr.agent_id,
+      COALESCE(cr.agent_username, u.username) AS agent_username,
+      cr.destination_number,
+      cr.direction,
+      cr.duration_seconds,
+      cr.r2_key,
+      cr.recording_url,
+      cr.created_at
+    FROM call_recordings cr
+    LEFT JOIN users u ON cr.agent_id = u.id
+    ${where}
+    ORDER BY cr.created_at DESC 
+    LIMIT 200
+  `).bind(...params).all();
+
+  // Build proxy URL for each recording that has an r2_key
+  const data = results.map((r: any) => ({
+    ...r,
+    playback_url: r.r2_key
+      ? `${appBaseUrl}/api/recordings/${encodeURIComponent(r.r2_key)}`
+      : r.recording_url || null,
+  }));
+
+  return c.json({ data });
 });
 
 export default admin;

@@ -186,8 +186,32 @@ calls.post('/manual', zValidator('json', manualCallSchema), async (c) => {
   }
   
   const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
+
+  // Update sticky routing map: record that this agent called this number
+  // from their assigned number, so inbound callbacks route back to them
+  if (direction === 'outbound') {
+    try {
+      const agentUser = await c.env.DB.prepare('SELECT assigned_phone_number FROM users WHERE id = ?')
+        .bind(body.agentId)
+        .first<{ assigned_phone_number: string | null }>();
+      const fromNumber = agentUser?.assigned_phone_number;
+      if (fromNumber && body.phoneNumber) {
+        await c.env.DB.prepare(`
+          INSERT INTO outbound_call_map (id, agent_id, from_number, to_number, last_call_at)
+          VALUES (?, ?, ?, ?, datetime('now'))
+          ON CONFLICT(from_number, to_number) DO UPDATE SET
+            agent_id = excluded.agent_id,
+            last_call_at = excluded.last_call_at
+        `).bind(crypto.randomUUID(), body.agentId, fromNumber, body.phoneNumber).run();
+      }
+    } catch (mapErr: any) {
+      console.warn('[calls/manual] outbound_call_map upsert failed (non-fatal):', mapErr?.message);
+    }
+  }
+
   return c.json({ data: callLog });
 });
+
 
 
 const updateCallSchema = z.object({

@@ -6,6 +6,12 @@ export interface Env {
   /** D1 database binding */
   DB: D1Database;
 
+  /**
+   * R2 bucket for storing call recordings durably.
+   * Bound as "RECORDINGS" in wrangler.jsonc.
+   */
+  RECORDINGS: R2Bucket;
+
   /** Telnyx Bearer token for REST API calls */
   TELNYX_API_KEY: string;
 

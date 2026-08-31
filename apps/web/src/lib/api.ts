@@ -111,8 +111,13 @@ export const api = {
     getWorkSummary: () =>
       request<{ data: any[] }>('/admin/agents/work-summary').then((r) => r.data),
 
-    getCallRecordings: () =>
-      request<{ data: any[] }>('/admin/call-recordings').then((r) => r.data),
+    getCallRecordings: (agentId?: string, date?: string) => {
+      const qs = new URLSearchParams();
+      if (agentId) qs.set('agent_id', agentId);
+      if (date) qs.set('date', date);
+      const query = qs.toString();
+      return request<{ data: any[] }>(`/admin/call-recordings${query ? `?${query}` : ''}`).then((r) => r.data);
+    },
 
     createAgent: (data: { username: string; password: string }) =>
       request<{ data: any }>('/admin/agents', {
