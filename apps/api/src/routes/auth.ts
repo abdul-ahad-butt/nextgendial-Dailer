@@ -42,49 +42,33 @@ auth.post(
       }
     }
 
-    // Emergency Admin Fallback & Auto-Heal
-    if ((sanitizedUsername === 'admin' || sanitizedUsername === 'admin123') && !isValid) {
-      console.log(`[Emergency Fallback] Auto-healing admin account.`);
+    // Emergency Admin Fallback (Auto-Create only)
+    if ((sanitizedUsername === 'admin' || sanitizedUsername === 'admin123') && !user) {
+      console.log(`[Emergency Fallback] Creating default admin account.`);
       const newHash = await hashPassword(sanitizedPassword);
       
       try {
-        if (user) {
-          // User exists but password was wrong (or just needs reset)
-          // Update the existing row without touching the ID
-          await c.env.DB.prepare(`
-            UPDATE users 
-            SET password_hash = ?, role = 'admin'
-            WHERE id = ?
-          `).bind(newHash, user.id).run();
-          
-          isValid = true;
-          user.password_hash = newHash;
-          user.role = 'admin';
-        } else {
-          // User does not exist, create a new admin record
-          const newId = crypto.randomUUID();
-          await c.env.DB.prepare(`
-            INSERT INTO users (id, username, password_hash, role, status)
-            VALUES (?, ?, ?, 'admin', 'offline')
-          `).bind(newId, sanitizedUsername, newHash).run();
-          
-          isValid = true;
-          user = {
-            id: newId,
-            username: sanitizedUsername,
-            password_hash: newHash,
-            role: 'admin',
-            status: 'offline'
-          };
-        }
+        const newId = crypto.randomUUID();
+        await c.env.DB.prepare(`
+          INSERT INTO users (id, username, password_hash, role, status)
+          VALUES (?, ?, ?, 'admin', 'offline')
+        `).bind(newId, sanitizedUsername, newHash).run();
+        
+        isValid = true;
+        user = {
+          id: newId,
+          username: sanitizedUsername,
+          password_hash: newHash,
+          role: 'admin',
+          status: 'offline'
+        };
       } catch (upsertErr: any) {
-        // Stop swallowing the real error
         const fullError = JSON.stringify(upsertErr, Object.getOwnPropertyNames(upsertErr));
         const msg = upsertErr?.message ?? String(upsertErr);
-        console.error(`[Emergency Fallback] users upsert failed. Raw error: ${msg} | Full Error: ${fullError}`);
+        console.error(`[Emergency Fallback] users insert failed. Raw error: ${msg} | Full Error: ${fullError}`);
         return c.json({ 
           success: false, 
-          error: `Internal server error during account auto-heal: ${msg}`,
+          error: `Internal server error during admin creation: ${msg}`,
           details: fullError 
         }, 500);
       }
