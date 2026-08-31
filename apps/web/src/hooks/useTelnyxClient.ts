@@ -211,7 +211,16 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
                 console.warn('[webrtc] Failed to fetch call context:', err);
               }
             }
-          } else if (!currentActive) {
+          } else if (currentActive) {
+            // Another call is already active — reject the new inbound call
+            console.warn(`[webrtc] Rejecting incoming call ${n.call.id} because another call is active.`);
+            if (typeof n.call.reject === 'function') {
+              n.call.reject();
+            } else if (typeof n.call.hangup === 'function') {
+              n.call.hangup();
+            }
+            return;
+          } else {
             // Manual inbound call — surface ringing UI immediately
             console.log('[webrtc] Inbound call ringing — surfacing UI...');
             const callerNumber = n.call.options?.remoteCallerNumber || n.call.options?.remoteCallerName || 'Unknown';
@@ -247,6 +256,12 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
 
         // For all other state changes, we need to match the notification to our activeCall
         if (!currentActive) return;
+
+        // Ensure this notification belongs to the currently active call
+        if (n.call.id && currentActive.sdkCall.id && n.call.id !== currentActive.sdkCall.id) {
+          console.warn(`[webrtc] Ignoring event (${callType}: ${callState}) for background/old call (id: ${n.call.id}). Active call is ${currentActive.sdkCall.id}`);
+          return;
+        }
 
         if (callState === 'active' || callState === 'answered' || callType === 'callUpdate' && (callState === 'active' || callState === 'answered')) {
           console.log('[webrtc] Call ACTIVE — audio should be flowing.');
