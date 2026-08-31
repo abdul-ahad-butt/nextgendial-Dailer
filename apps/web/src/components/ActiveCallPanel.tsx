@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ActiveCall, CallLog } from '../types';
 
 interface Props {
@@ -15,7 +15,7 @@ interface Props {
   onReject: () => void;
 }
 
-export function ActiveCallPanel({
+export const ActiveCallPanel = React.memo(function ActiveCallPanel({
   currentStatus,
   activeCall,
   callContext,
@@ -179,7 +179,7 @@ export function ActiveCallPanel({
 
     </div>
   );
-}
+});
 
 function CallTimer({ started, isWrapUp }: { started: string | null; isWrapUp: boolean }) {
   const [elapsed, setElapsed] = useState(0);

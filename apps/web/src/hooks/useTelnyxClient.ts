@@ -45,7 +45,7 @@ interface UseTelnyxClientResult {
   sendDTMF: (digit: string) => void;
   newCall: (destinationNumber: string, callerNumber?: string, callLogId?: string | null, leadCallControlId?: string | null) => void;
   retryConnection: () => void;
-  lastFailedCall: { cause: string; timestamp: number } | null;
+  lastFailedCall: { cause: string; category?: string; timestamp: number; isConfigIssue?: boolean } | null;
 }
 
 export function useTelnyxClient(agentId: string | null, agentStatus?: string): UseTelnyxClientResult {
@@ -53,12 +53,13 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
   const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
   const [callContext, setCallContext] = useState<CallLog | null>(null);
   const [connectionState, setConnectionState] = useState<WebRTCConnectionState>('idle');
-  const [lastFailedCall, setLastFailedCall] = useState<{ cause: string; timestamp: number } | null>(null);
+  const [lastFailedCall, setLastFailedCall] = useState<{ cause: string; category?: string; timestamp: number; isConfigIssue?: boolean } | null>(null);
 
   // Refs to track call state for use inside stable callbacks without re-render
   const activeCallRef = useRef<ActiveCall | null>(null);
   activeCallRef.current = activeCall;
   const answeredRef = useRef(false);
+  const callStartTimesRef = useRef<Record<string, number>>({});
 
   // ── Token fetch + client construction ─────────────────────
 
@@ -278,12 +279,32 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
 
         if (callState === 'done' || callState === 'destroy' || callState === 'hangup') {
           console.log(`[webrtc] Call ended. State: ${callState}, Cause: ${callCause}, WasAnswered: ${answeredRef.current}`);
+          
+          let setup_duration_ms: number | undefined;
+          let failure_category: string | undefined;
+
+          if (n.call.id && callStartTimesRef.current[n.call.id]) {
+            setup_duration_ms = Date.now() - callStartTimesRef.current[n.call.id];
+          }
+
+          if (!answeredRef.current) {
+            if (callCause === 'UNALLOCATED_NUMBER') failure_category = 'Invalid number';
+            else if (callCause === 'CALL_REJECTED') {
+              if (setup_duration_ms !== undefined && setup_duration_ms < 3000) failure_category = 'Rejected immediately — possible account/config issue';
+              else failure_category = 'Call declined';
+            } else if (callCause === 'USER_BUSY') failure_category = 'Line busy';
+            else if (callCause === 'none' || callCause === 'TIMEOUT') failure_category = 'No answer';
+            else failure_category = callCause; // fallback
+          }
+
           if (currentActive.callLogId) {
             const finalStatus = answeredRef.current ? 'completed' : 'failed';
             api.calls.update(currentActive.callLogId, {
               status: finalStatus,
               end_time: new Date().toISOString(),
-              hangup_cause: callCause !== 'none' ? callCause : undefined
+              hangup_cause: callCause !== 'none' ? callCause : undefined,
+              setup_duration_ms,
+              failure_category
             }).catch(console.error);
           }
           if (currentActive.leadCallControlId) {
@@ -294,17 +315,28 @@ export function useTelnyxClient(agentId: string | null, agentStatus?: string): U
           }
           
           if (!answeredRef.current) {
-            setLastFailedCall({ cause: callCause, timestamp: Date.now() });
+            setLastFailedCall({ 
+              cause: callCause, 
+              category: failure_category,
+              timestamp: Date.now(),
+              isConfigIssue: failure_category === 'Rejected immediately — possible account/config issue'
+            });
           }
 
           answeredRef.current = false;
           setActiveCall(null);
+          if (n.call.id) {
+            delete callStartTimesRef.current[n.call.id];
+          }
           // Don't clear callContext here — ActiveCallBar keeps it until
           // the agent's status flips out of wrap_up via polling
           return;
         }
 
         if (callState === 'new' || callState === 'requesting' || callState === 'connecting') {
+          if (callState === 'new' && n.call.id && !callStartTimesRef.current[n.call.id]) {
+            callStartTimesRef.current[n.call.id] = Date.now();
+          }
           // Outbound call just initiated — update activeCall with the real sdkCall object
           // The sdkCall from newCall() might be a different object reference
           console.log(`[webrtc] Outbound call state: ${callState} — waiting for far-end answer...`);

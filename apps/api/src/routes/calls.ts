@@ -11,7 +11,7 @@ calls.use('*', authMiddleware);
 
 // ── GET /calls — list call logs with optional filters ────────────────
 calls.get('/', async (c) => {
-  const { agent_id, campaign_id, telnyx_call_control_id, page = '1', limit = '50' } = c.req.query();
+  const { agent_id, campaign_id, telnyx_call_control_id, status, page = '1', limit = '50' } = c.req.query();
   
   const conditions: string[] = [];
   const params: any[] = [];
@@ -22,6 +22,7 @@ calls.get('/', async (c) => {
     conditions.push('(telnyx_call_control_id = ? OR agent_leg_call_control_id = ?)');
     params.push(telnyx_call_control_id, telnyx_call_control_id);
   }
+  if (status) { conditions.push('status = ?'); params.push(status); }
   
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const limitNum = Math.min(parseInt(limit, 10) || 50, 200);
@@ -219,6 +220,8 @@ const updateCallSchema = z.object({
   end_time: z.string().optional(),
   duration: z.number().optional(),
   hangup_cause: z.string().optional(),
+  setup_duration_ms: z.number().optional(),
+  failure_category: z.string().optional(),
 });
 
 calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
@@ -253,6 +256,14 @@ calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
   if (body.hangup_cause) {
     updates.push('hangup_cause = ?');
     values.push(body.hangup_cause);
+  }
+  if (body.setup_duration_ms !== undefined) {
+    updates.push('setup_duration_ms = ?');
+    values.push(body.setup_duration_ms);
+  }
+  if (body.failure_category) {
+    updates.push('failure_category = ?');
+    values.push(body.failure_category);
   }
   
   if (updates.length > 0) {

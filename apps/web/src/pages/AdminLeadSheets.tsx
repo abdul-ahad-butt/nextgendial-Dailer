@@ -66,42 +66,13 @@ export function AdminLeadSheets() {
           NextGenDial Admin
         </div>
 
-        <div style={{ display: 'flex', gap: 12, marginLeft: 48, flex: 1 }}>
-          <button 
-            className="btn btn-ghost"
-            onClick={() => navigate('/admin')}
-          >
-            Dashboard
-          </button>
-          <button 
-            className="btn btn-ghost"
-            onClick={() => navigate('/admin/agent-status')}
-          >
-            Agent Status
-          </button>
-          <button 
-            className="btn btn-ghost"
-            onClick={() => navigate('/admin/leads')}
-          >
-            Leads
-          </button>
-          <button 
-            className="btn btn-primary"
-          >
-            Lead Sheets
-          </button>
-          <button 
-            className="btn btn-ghost"
-            onClick={() => navigate('/admin')}
-          >
-            Phone Numbers
-          </button>
-          <button 
-            className="btn btn-ghost"
-            onClick={() => navigate('/admin/recordings')}
-          >
-            Call Recordings
-          </button>
+        <div className="app-header-nav">
+          <button className="btn btn-ghost" onClick={() => navigate('/admin')}>Dashboard</button>
+          <button className="btn btn-ghost" onClick={() => navigate('/admin/agent-status')}>Agent Status</button>
+          <button className="btn btn-ghost" onClick={() => navigate('/admin/leads')}>Leads</button>
+          <button className="btn btn-primary" onClick={() => navigate('/admin/leadsheets')}>Lead Sheets</button>
+          <button className="btn btn-ghost" onClick={() => navigate('/admin')}>Phone Numbers</button>
+          <button className="btn btn-ghost" onClick={() => navigate('/admin/recordings')}>Call Recordings</button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>

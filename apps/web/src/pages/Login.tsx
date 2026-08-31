@@ -8,8 +8,15 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { login } = useAuth();
+  const { login, user, isLoading } = useAuth();
   const navigate = useNavigate();
+
+  // Redirect if already logged in
+  React.useEffect(() => {
+    if (!isLoading && user) {
+      navigate(user.role === 'admin' ? '/admin' : '/agent', { replace: true });
+    }
+  }, [user, isLoading, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,33 +60,18 @@ export function Login() {
           <p className="login-subtitle">Sign in to your account</p>
         </div>
 
-        {error && (
-          <p
-            role="alert"
-            style={{
-              color: 'var(--danger)',
-              fontSize: 13,
-              padding: '12px 16px',
-              background: 'hsla(4, 80%, 58%, 0.1)',
-              border: '1px solid hsla(4, 80%, 58%, 0.3)',
-              borderRadius: 8,
-              marginBottom: 20,
-              textAlign: 'center',
-            }}
-          >
-            {error}
-          </p>
-        )}
-
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="form-group">
             <label className="form-label" htmlFor="username">Username</label>
             <input
               id="username"
-              className="form-control"
+              className={`form-control ${error ? 'is-invalid' : ''}`}
               type="text"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => {
+                setUsername(e.target.value);
+                if (error) setError(null);
+              }}
               required
               autoFocus
             />
@@ -88,13 +80,19 @@ export function Login() {
             <label className="form-label" htmlFor="password">Password</label>
             <input
               id="password"
-              className="form-control"
+              className={`form-control ${error ? 'is-invalid' : ''}`}
               type="password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                if (error) setError(null);
+              }}
               required
             />
           </div>
+          
+          {error && <div className="form-error" style={{ textAlign: 'center', marginTop: -4, marginBottom: 8 }}>{error}</div>}
+
           <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', marginTop: 8 }}>
             {loading ? <span className="spinner" /> : 'Sign In'}
           </button>

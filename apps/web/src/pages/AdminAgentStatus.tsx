@@ -38,11 +38,8 @@ export function AdminAgentStatus() {
           NextGenDial Admin
         </div>
 
-        <div style={{ display: 'flex', gap: 12, marginLeft: 48, flex: 1 }}>
-          <button 
-            className="btn btn-ghost"
-            onClick={() => navigate('/admin')}
-          >
+        <div className="app-header-nav">
+          <button className="btn btn-ghost" onClick={() => navigate('/admin')}>
             Dashboard
           </button>
           <button 

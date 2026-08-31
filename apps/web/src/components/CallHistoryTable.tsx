@@ -5,7 +5,7 @@
  * Disposition badges use distinct color coding for quick scanning.
  */
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { CallLog, Disposition } from '../types';
 import { api } from '../lib/api';
 
@@ -37,7 +37,7 @@ const DISPOSITIONS_LABEL: Record<Disposition, string> = {
 
 const PAGE_SIZE = 20;
 
-export function CallHistoryTable({ agentId }: Props) {
+export const CallHistoryTable = React.memo(function CallHistoryTable({ agentId }: Props) {
   const [logs, setLogs] = useState<CallLog[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -67,20 +67,26 @@ export function CallHistoryTable({ agentId }: Props) {
               <th scope="col">Status</th>
               <th scope="col">Disposition</th>
               <th scope="col">Duration</th>
-              <th scope="col">Hangup Cause</th>
+              <th scope="col">Diagnostics</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="table-empty">
-                  <span className="spinner" style={{ margin: '0 auto' }} />
+                <td colSpan={5} style={{ padding: '24px' }}>
+                  <div className="skeleton skeleton-row"></div>
+                  <div className="skeleton skeleton-row" style={{ width: '90%' }}></div>
+                  <div className="skeleton skeleton-row" style={{ width: '80%' }}></div>
                 </td>
               </tr>
             ) : logs.length === 0 ? (
               <tr>
-                <td colSpan={5} className="table-empty text-muted">
-                  No calls yet
+                <td colSpan={5} style={{ padding: '40px 24px' }}>
+                  <div className="empty-state" style={{ border: 'none', background: 'transparent' }}>
+                    <div className="empty-state-icon">📞</div>
+                    <div className="empty-state-title">No call history</div>
+                    <div className="empty-state-text">There are no calls logged for this agent yet.</div>
+                  </div>
                 </td>
               </tr>
             ) : (
@@ -105,7 +111,12 @@ export function CallHistoryTable({ agentId }: Props) {
                   </td>
                   <td className="text-mono text-sm">{formatDuration(log.duration_seconds)}</td>
                   <td className="text-muted text-sm">
-                    {log.hangup_cause ?? '—'}
+                    {log.failure_category || log.hangup_cause || '—'}
+                    {log.setup_duration_ms !== null && log.setup_duration_ms !== undefined && (
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--text-dim)' }}>
+                        Setup: {log.setup_duration_ms}ms
+                      </span>
+                    )}
                   </td>
                 </tr>
               ))
@@ -150,4 +161,4 @@ export function CallHistoryTable({ agentId }: Props) {
       )}
     </div>
   );
-}
+});

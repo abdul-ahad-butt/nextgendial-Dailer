@@ -210,6 +210,7 @@ export const api = {
       agent_id?: string;
       campaign_id?: string;
       telnyx_call_control_id?: string;
+      status?: string;
       page?: number;
       limit?: number;
     }) => {
@@ -217,6 +218,7 @@ export const api = {
       if (params?.agent_id) qs.set('agent_id', params.agent_id);
       if (params?.campaign_id) qs.set('campaign_id', params.campaign_id);
       if (params?.telnyx_call_control_id) qs.set('telnyx_call_control_id', params.telnyx_call_control_id);
+      if (params?.status) qs.set('status', params.status);
       if (params?.page) qs.set('page', String(params.page));
       if (params?.limit) qs.set('limit', String(params.limit));
       return request<PaginatedResponse<CallLog>>(`/calls?${qs}`);
@@ -258,7 +260,7 @@ export const api = {
         body: JSON.stringify({ to }),
       }),
       
-    update: (id: string, data: { status?: string; end_time?: string; duration?: number; hangup_cause?: string }) =>
+    update: (id: string, data: { status?: string; end_time?: string; duration?: number; hangup_cause?: string; setup_duration_ms?: number; failure_category?: string }) =>
       request<{ data: CallLog }>(`/calls/${id}`, {
         method: 'PATCH',
         body: JSON.stringify(data),

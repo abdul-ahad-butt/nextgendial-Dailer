@@ -106,6 +106,8 @@ export interface CallLog {
   ended_at: string | null;
   duration_seconds: number | null;
   hangup_cause: string | null;
+  setup_duration_ms: number | null;
+  failure_category: string | null;
   recording_url: string | null;
   created_at: string;
 }

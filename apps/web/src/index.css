@@ -133,6 +133,12 @@ h3 { font-size: 14px; font-weight: 600; }
   gap: 0;
 }
 
+@media (max-width: 768px) {
+  .app-main {
+    grid-template-columns: 1fr;
+  }
+}
+
 .sidebar {
   background: var(--bg-surface);
   border-right: 1px solid var(--border);
@@ -151,19 +157,68 @@ h3 { font-size: 14px; font-weight: 600; }
   overflow-y: auto;
 }
 
-/* ── Header bar ── */
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 var(--space-6);
-  height: 52px;
+  padding: 0 var(--space-4);
+  min-height: 52px;
   background: rgba(18, 20, 24, 0.7);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   backdrop-filter: blur(24px) saturate(180%);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   z-index: 10;
+  flex-wrap: wrap;
+}
+
+.app-header-nav {
+  display: flex;
+  gap: var(--space-3);
+  margin-left: var(--space-6);
+  flex: 1;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.app-header-nav::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .app-header-nav {
+    margin-left: 0;
+    margin-top: var(--space-2);
+    padding-bottom: var(--space-2);
+    width: 100%;
+    order: 3;
+  }
+  .app-header {
+    padding: var(--space-2) var(--space-4);
+  }
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-8);
+}
+@media (max-width: 768px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dashboard-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+@media (max-width: 768px) {
+  .dashboard-grid-3 {
+    grid-template-columns: 1fr;
+  }
 }
 
 .app-logo {
@@ -826,6 +881,17 @@ h3 { font-size: 14px; font-weight: 600; }
 
 .form-control::placeholder { color: var(--text-muted); }
 
+.form-control.is-invalid {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px hsla(4, 80%, 58%, 0.2);
+}
+
+.form-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 4px;
+}
+
 select.form-control {
   cursor: pointer;
   appearance: none;
@@ -998,6 +1064,28 @@ textarea.form-control {
   color: var(--warning); 
   border-color: hsla(38, 92%, 55%, 0.3);
 }
+
+/* ── Disposition Badges ── */
+.disposition-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid transparent;
+}
+
+.disposition-badge--sale { background: hsla(142, 72%, 42%, 0.15); color: var(--success); border-color: hsla(142, 72%, 42%, 0.3); }
+.disposition-badge--callback { background: hsla(38, 92%, 55%, 0.15); color: var(--warning); border-color: hsla(38, 92%, 55%, 0.3); }
+.disposition-badge--not_interested { background: var(--surface-sunken); color: var(--text-secondary); border-color: var(--border); }
+.disposition-badge--wrong_number { background: hsla(4, 80%, 58%, 0.15); color: var(--danger); border-color: hsla(4, 80%, 58%, 0.3); }
+.disposition-badge--voicemail { background: hsla(220, 70%, 65%, 0.15); color: hsl(220, 70%, 65%); border-color: hsla(220, 70%, 65%, 0.3); }
+.disposition-badge--no_answer { background: hsla(220, 15%, 42%, 0.15); color: var(--status-offline); border-color: hsla(220, 15%, 42%, 0.3); }
+.disposition-badge--dnc_request { background: hsla(260, 70%, 65%, 0.15); color: var(--status-dialing); border-color: hsla(260, 70%, 65%, 0.3); }
+
 .pill-chip--called  { 
   background: hsla(220, 70%, 65%, 0.15); 
   color: hsl(220, 70%, 65%); 
@@ -1172,3 +1260,50 @@ textarea.form-control {
   color: var(--status-dialing);
   border-bottom: 1px solid hsla(260, 70%, 65%, 0.2);
 }
+
+/* ── Empty States ── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-8) var(--space-4);
+  text-align: center;
+  background: var(--bg-surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+}
+.empty-state-icon {
+  font-size: 32px;
+  margin-bottom: var(--space-3);
+  opacity: 0.5;
+}
+.empty-state-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-1);
+}
+.empty-state-text {
+  font-size: 13px;
+  max-width: 320px;
+}
+
+/* ── Loading Skeletons ── */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--border) 50%, var(--bg-elevated) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton-row {
+  height: 20px;
+  margin-bottom: var(--space-2);
+  width: 100%;
+}
+.skeleton-row:last-child { width: 80%; margin-bottom: 0; }

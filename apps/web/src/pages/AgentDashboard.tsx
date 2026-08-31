@@ -39,6 +39,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
   const [loadingLeads, setLoadingLeads] = useState(true);
   const [isAutoDialEnabled, setIsAutoDialEnabled] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastType, setToastType] = useState<'error' | 'warning'>('error');
   // callerId: null means no phone number assigned to this agent
   const [callerId, setCallerId] = useState<string | null | undefined>(undefined); // undefined = loading
   const [dialingLeadId, setDialingLeadId] = useState<string | null>(null);
@@ -83,12 +84,15 @@ export function AgentDashboard({ agent, onLogout }: Props) {
         setDialingLeadId(null);
       }
 
-      let friendly = lastFailedCall.cause;
-      if (friendly === 'UNALLOCATED_NUMBER') friendly = 'Invalid Number';
-      else if (friendly === 'USER_BUSY') friendly = 'Line Busy';
-      else if (friendly === 'NO_ANSWER') friendly = 'No Answer';
-      else if (friendly === 'NORMAL_CLEARING') friendly = 'Call Ended';
+      let friendly = lastFailedCall.category || lastFailedCall.cause;
+      if (!lastFailedCall.category) {
+        if (friendly === 'UNALLOCATED_NUMBER') friendly = 'Invalid Number';
+        else if (friendly === 'USER_BUSY') friendly = 'Line Busy';
+        else if (friendly === 'NO_ANSWER') friendly = 'No Answer';
+        else if (friendly === 'NORMAL_CLEARING') friendly = 'Call Ended';
+      }
       
+      setToastType(lastFailedCall.isConfigIssue ? 'warning' : 'error');
       setToastMessage(`Call failed: ${friendly}`);
       const t = setTimeout(() => setToastMessage(null), 5000);
       return () => clearTimeout(t);
@@ -252,9 +256,8 @@ export function AgentDashboard({ agent, onLogout }: Props) {
         </div>
       )}
 
-      {/* ── Toast notification ── */}
       {toastMessage && (
-        <div className="status-toast status-toast--error" style={{ position: 'fixed', top: 110, left: '50%', transform: 'translateX(-50%)', zIndex: 100, background: 'var(--danger-dim)', border: '1px solid var(--danger)', color: '#fff', padding: '12px 20px', borderRadius: '8px', boxShadow: 'var(--shadow-md)' }} role="alert">
+        <div className={`status-toast status-toast--${toastType}`} style={{ position: 'fixed', top: 110, left: '50%', transform: 'translateX(-50%)', zIndex: 100, background: toastType === 'warning' ? '#473619' : 'var(--danger-dim)', border: toastType === 'warning' ? '1px solid #d99616' : '1px solid var(--danger)', color: '#fff', padding: '12px 20px', borderRadius: '8px', boxShadow: 'var(--shadow-md)' }} role="alert">
           {toastMessage}
         </div>
       )}
@@ -366,7 +369,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                   </button>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 20 }}>
+                <div className="dashboard-grid-3" style={{ marginBottom: 20 }}>
                   <div style={{ background: 'var(--bg-elevated)', padding: 12, borderRadius: 8, textAlign: 'center' }}>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Session Progress</div>
                     <div style={{ fontSize: 24, fontWeight: 600, marginTop: 4 }}>{sessionDialed} <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>/ {sessionTotal}</span></div>
@@ -406,11 +409,20 @@ export function AgentDashboard({ agent, onLogout }: Props) {
               </button>
             </div>
             
-            <div className="card" style={{ overflow: 'hidden' }}>
+            <div className="card" style={{ overflowX: 'auto' }}>
               {loadingLeads ? (
-                <div style={{ padding: 24, textAlign: 'center' }}><span className="spinner" /></div>
+                <div style={{ padding: '24px' }}>
+                  <div className="skeleton skeleton-row"></div>
+                  <div className="skeleton skeleton-row" style={{ width: '80%' }}></div>
+                </div>
               ) : leads.length === 0 ? (
-                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>No pending leads assigned.</div>
+                <div style={{ padding: '40px 24px' }}>
+                  <div className="empty-state" style={{ border: 'none', background: 'transparent' }}>
+                    <div className="empty-state-icon">📋</div>
+                    <div className="empty-state-title">No pending leads</div>
+                    <div className="empty-state-text">You have no leads waiting to be called right now.</div>
+                  </div>
+                </div>
               ) : (
                 <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>

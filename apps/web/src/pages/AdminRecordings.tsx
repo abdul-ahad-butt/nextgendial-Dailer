@@ -74,7 +74,7 @@ export function AdminRecordings() {
           NextGenDial Admin
         </div>
 
-        <div style={{ display: 'flex', gap: 12, marginLeft: 48, flex: 1 }}>
+        <div className="app-header-nav">
           <button className="btn btn-ghost" onClick={() => navigate('/admin')}>Dashboard</button>
           <button className="btn btn-ghost" onClick={() => navigate('/admin/agent-status')}>Agent Status</button>
           <button className="btn btn-ghost" onClick={() => navigate('/admin/leads')}>Leads</button>
@@ -135,9 +135,19 @@ export function AdminRecordings() {
 
         <div className="card" style={{ padding: 24, overflowX: 'auto' }}>
           {loading ? (
-            <span className="spinner" />
+             <div style={{ padding: '24px' }}>
+                <div className="skeleton skeleton-row"></div>
+                <div className="skeleton skeleton-row" style={{ width: '90%' }}></div>
+                <div className="skeleton skeleton-row" style={{ width: '80%' }}></div>
+             </div>
           ) : recordings.length === 0 ? (
-            <p className="text-muted text-sm">No call recordings found.</p>
+             <div style={{ padding: '60px 24px' }}>
+               <div className="empty-state" style={{ border: 'none', background: 'transparent' }}>
+                 <div className="empty-state-icon">🎙️</div>
+                 <div className="empty-state-title">No recordings found</div>
+                 <div className="empty-state-text">There are no call recordings matching your filters.</div>
+               </div>
+             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>

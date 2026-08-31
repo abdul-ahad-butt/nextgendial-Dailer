@@ -40,6 +40,9 @@ export function AdminDashboard() {
   const [selectedPhoneColIdx, setSelectedPhoneColIdx] = useState<number | ''>('');
   const [pendingUploadData, setPendingUploadData] = useState<any>(null);
 
+  // System Warning State
+  const [systemWarning, setSystemWarning] = useState<string | null>(null);
+
 
 
   useEffect(() => {
@@ -48,6 +51,22 @@ export function AdminDashboard() {
     const interval = setInterval(() => {
       fetchAgents();
     }, 5000);
+    
+    // Check for recent systemic configuration failures
+    api.calls.list({ status: 'failed', limit: 5 })
+      .then(res => {
+        const failures = res.data;
+        if (failures.length >= 3) {
+          const recentConfigFailures = failures.slice(0, 3).every(call => 
+            call.failure_category === 'Rejected immediately — possible account/config issue'
+          );
+          if (recentConfigFailures) {
+            setSystemWarning('System Warning: The last 3 failed calls were immediately rejected. Please check your Telnyx account balance, trial restrictions, or Outbound Voice Profile settings.');
+          }
+        }
+      })
+      .catch(console.error);
+
     return () => clearInterval(interval);
   }, []);
 
@@ -174,7 +193,7 @@ export function AdminDashboard() {
           NextGenDial Admin
         </div>
 
-        <div style={{ display: 'flex', gap: 12, marginLeft: 48, flex: 1 }}>
+        <div className="app-header-nav">
           <button 
             className={`btn ${activeTab === 'general' ? 'btn-primary' : 'btn-ghost'}`}
             onClick={() => setActiveTab('general')}
@@ -203,6 +222,14 @@ export function AdminDashboard() {
         </div>
       </header>
 
+      {/* ── System Warning Banner ── */}
+      {systemWarning && (
+        <div style={{ background: '#473619', color: '#fff', border: '1px solid #d99616', padding: '12px 24px', textAlign: 'center', fontWeight: 500 }}>
+          <span style={{ marginRight: 8 }}>⚠</span>
+          {systemWarning}
+        </div>
+      )}
+
       {/* ── Main Layout ── */}
       {activeTab === 'numbers' ? (
         <main className="main-content" style={{ width: '100%', flex: 1, overflowY: 'auto' }}>
@@ -216,7 +243,7 @@ export function AdminDashboard() {
           <p className="text-muted" style={{ margin: 0, marginTop: 4 }}>Manage agents and assign leads.</p>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
+        <div className="dashboard-grid">
         
         {/* LEFT COLUMN: AGENT MANAGEMENT */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -238,10 +265,13 @@ export function AdminDashboard() {
                 <label className="form-label" htmlFor="username">Username</label>
                 <input
                   id="username"
-                  className="form-control"
+                  className={`form-control ${agentMessage?.type === 'error' ? 'is-invalid' : ''}`}
                   type="text"
                   value={newUsername}
-                  onChange={e => setNewUsername(e.target.value)}
+                  onChange={e => {
+                    setNewUsername(e.target.value);
+                    if (agentMessage?.type === 'error') setAgentMessage(null);
+                  }}
                   required
                 />
               </div>
@@ -249,10 +279,13 @@ export function AdminDashboard() {
                 <label className="form-label" htmlFor="password">Password</label>
                 <input
                   id="password"
-                  className="form-control"
+                  className={`form-control ${agentMessage?.type === 'error' ? 'is-invalid' : ''}`}
                   type="password"
                   value={newPassword}
-                  onChange={e => setNewPassword(e.target.value)}
+                  onChange={e => {
+                    setNewPassword(e.target.value);
+                    if (agentMessage?.type === 'error') setAgentMessage(null);
+                  }}
                   required
                 />
               </div>
