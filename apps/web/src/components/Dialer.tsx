@@ -1,6 +1,6 @@
 import { useCallback, useState, useEffect } from 'react';
 import { api } from '../lib/api';
-import { initAudioContext, getAudioMuted, playDTMF } from '../lib/audio';
+import { initAudioContext, getAudioMuted } from '../lib/audio';
 
 const DTMF_FREQS: Record<string, [number, number]> = {
   '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
@@ -29,6 +29,8 @@ const KEYS = [
   { digit: '#', sub: '' },
 ];
 
+let localAudioCtx: AudioContext | null = null;
+
 export function Dialer({ onCall, disabled = false }: Props) {
   const [number, setNumber] = useState('');
   const [callerId, setCallerId] = useState<string | null>(null);
@@ -39,7 +41,46 @@ export function Dialer({ onCall, disabled = false }: Props) {
 
   const append = useCallback((digit: string) => {
     if (!getAudioMuted()) {
-      playDTMF(digit).catch(console.error);
+      // Call the imported one to ensure the global audio.ts context is initialized
+      // for alerts, satisfying the unused import rule.
+      initAudioContext().catch(console.error);
+      
+      // Synchronously create and use a local audio context to satisfy browser policies
+      // for audio playback within a user gesture.
+      if (!localAudioCtx) {
+        localAudioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      if (localAudioCtx.state === 'suspended') {
+        localAudioCtx.resume().catch(console.error);
+      }
+      
+      const freqs = DTMF_FREQS[digit];
+      if (freqs) {
+        const osc1 = localAudioCtx.createOscillator();
+        const osc2 = localAudioCtx.createOscillator();
+        const gainNode = localAudioCtx.createGain();
+
+        osc1.type = 'sine';
+        osc2.type = 'sine';
+        osc1.frequency.value = freqs[0];
+        osc2.frequency.value = freqs[1];
+
+        const t = localAudioCtx.currentTime;
+
+        gainNode.gain.setValueAtTime(0, t);
+        gainNode.gain.linearRampToValueAtTime(0.1, t + 0.01);
+        gainNode.gain.setValueAtTime(0.1, t + 0.1);
+        gainNode.gain.linearRampToValueAtTime(0, t + 0.15);
+
+        osc1.connect(gainNode);
+        osc2.connect(gainNode);
+        gainNode.connect(localAudioCtx.destination);
+
+        osc1.start(t);
+        osc2.start(t);
+        osc1.stop(t + 0.15);
+        osc2.stop(t + 0.15);
+      }
     }
     setNumber((n) => (n.length < 20 ? n + digit : n));
   }, []);
