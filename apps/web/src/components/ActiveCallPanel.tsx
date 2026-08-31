@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Agent, ActiveCall, CallLog } from '../types';
+import type { ActiveCall, CallLog } from '../types';
 
 interface Props {
   currentStatus: string;
