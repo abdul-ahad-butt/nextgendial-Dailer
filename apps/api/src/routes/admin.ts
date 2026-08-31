@@ -95,13 +95,47 @@ admin.post('/agents', zValidator('json', createUserSchema), async (c) => {
 admin.get('/agents', async (c) => {
   // Return all users with role='agent' ordered by created_at DESC
   const { results } = await c.env.DB.prepare(
-    `SELECT id, username, created_at 
+    `SELECT id, username, created_at, status
      FROM users 
-     WHERE role = 'agent' 
+     WHERE role = 'agent' AND COALESCE(status, 'offline') != 'deleted'
      ORDER BY created_at DESC`
   ).all();
 
   return c.json({ data: results });
+});
+
+admin.delete('/agents/:id', async (c) => {
+  const id = c.req.param('id');
+
+  const agent = await c.env.DB.prepare("SELECT id FROM users WHERE id = ? AND role = 'agent'").bind(id).first();
+  if (!agent) {
+    return c.json({ error: 'Agent not found' }, 404);
+  }
+
+  // Soft delete by setting status to 'deleted'
+  await c.env.DB.batch([
+    c.env.DB.prepare("UPDATE users SET status = 'deleted' WHERE id = ?").bind(id),
+    c.env.DB.prepare("UPDATE agent_status SET status = 'offline' WHERE user_id = ?").bind(id)
+  ]);
+
+  return c.json({ success: true, deleted_agent_id: id });
+});
+
+admin.post('/agents/:id/reset-password', async (c) => {
+  const id = c.req.param('id');
+
+  const agent = await c.env.DB.prepare("SELECT id, username FROM users WHERE id = ? AND role = 'agent'").bind(id).first();
+  if (!agent) {
+    return c.json({ error: 'Agent not found' }, 404);
+  }
+
+  // Generate secure random password
+  const newPassword = crypto.randomUUID().replace(/-/g, '').slice(0, 12) + 'A1!'; 
+  const passwordHash = await hashPassword(newPassword);
+
+  await c.env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?").bind(passwordHash, id).run();
+
+  return c.json({ success: true, new_password: newPassword });
 });
 
 const uploadLeadsSchema = z.object({
@@ -468,12 +502,17 @@ admin.get('/agents/work-summary', async (c) => {
      LEFT JOIN agent_status a  ON u.id = a.user_id
      LEFT JOIN agent_activity_logs al
             ON u.id = al.agent_id AND al.date = date('now')
-     LEFT JOIN call_logs cl
-            ON u.id = cl.agent_id
-           AND (cl.ended_at IS NULL AND cl.end_time IS NULL)
-           AND cl.status NOT IN ('completed', 'failed', 'no_answer', 'busy', 'voicemail')
+     LEFT JOIN (
+       SELECT * FROM (
+         SELECT agent_id, lead_id, start_time, started_at,
+                ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY COALESCE(start_time, started_at) DESC) as rn
+         FROM call_logs
+         WHERE (ended_at IS NULL AND end_time IS NULL)
+           AND status NOT IN ('completed', 'failed', 'no_answer', 'busy', 'voicemail')
+       ) WHERE rn = 1
+     ) cl ON u.id = cl.agent_id
      LEFT JOIN leads l ON cl.lead_id = l.id
-     WHERE u.role = 'agent'
+     WHERE u.role = 'agent' AND COALESCE(u.status, 'offline') != 'deleted'
      ORDER BY u.created_at DESC`
   ).all();
 

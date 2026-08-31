@@ -105,6 +105,16 @@ export const api = {
     getAgents: () =>
       request<{ data: any[] }>('/admin/agents').then((r) => r.data),
 
+    deleteAgent: (id: string) =>
+      request<{ success: boolean; deleted_agent_id: string }>(`/admin/agents/${id}`, {
+        method: 'DELETE',
+      }),
+
+    resetAgentPassword: (id: string) =>
+      request<{ success: boolean; new_password: string }>(`/admin/agents/${id}/reset-password`, {
+        method: 'POST',
+      }),
+
     getAgentStatus: () =>
       request<{ data: any[] }>('/admin/agent-status').then((r) => r.data),
 

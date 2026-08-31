@@ -14,7 +14,7 @@ export function AdminAgentStatus() {
     fetchWorkSummary();
     const interval = setInterval(() => {
       fetchWorkSummary();
-    }, 5000);
+    }, 2500);
     return () => clearInterval(interval);
   }, []);
 

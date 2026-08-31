@@ -9,6 +9,7 @@ interface User {
   id: string;
   username: string;
   created_at: string;
+  status?: string;
 }
 
 export function AdminDashboard() {
@@ -42,6 +43,29 @@ export function AdminDashboard() {
 
   // System Warning State
   const [systemWarning, setSystemWarning] = useState<string | null>(null);
+
+  // Password Modal State
+  const [passwordModal, setPasswordModal] = useState<{ username: string; password?: string; isReset?: boolean } | null>(null);
+
+  const handleDeleteAgent = async (agentId: string) => {
+    if (!window.confirm("Are you sure you want to delete this agent? They will no longer be able to log in. Their call history will be preserved.")) return;
+    try {
+      await api.admin.deleteAgent(agentId);
+      fetchAgents();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete agent");
+    }
+  };
+
+  const handleResetPassword = async (agentId: string, username: string) => {
+    if (!window.confirm(`Are you sure you want to reset the password for ${username}?`)) return;
+    try {
+      const res = await api.admin.resetAgentPassword(agentId);
+      setPasswordModal({ username, password: res.new_password, isReset: true });
+    } catch (err: any) {
+      alert(err.message || "Failed to reset password");
+    }
+  };
 
 
 
@@ -86,7 +110,7 @@ export function AdminDashboard() {
     setAgentMessage(null);
     try {
       await api.admin.createAgent({ username: newUsername, password: newPassword });
-      setAgentMessage({ type: 'success', text: 'Agent created successfully' });
+      setPasswordModal({ username: newUsername, password: newPassword, isReset: false });
       setNewUsername('');
       setNewPassword('');
       fetchAgents();
@@ -294,6 +318,54 @@ export function AdminDashboard() {
               </button>
             </form>
           </div>
+          
+          <div className="card" style={{ padding: 24, overflowX: 'auto' }}>
+            <h2 style={{ fontSize: 18, marginBottom: 16 }}>Active Agents</h2>
+            {agents.length === 0 ? (
+              <p className="text-muted text-sm">No active agents found.</p>
+            ) : (
+              <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                    <th style={{ padding: '8px 12px', fontWeight: 500 }}>Agent</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 500 }}>Created</th>
+                    <th style={{ padding: '8px 12px', fontWeight: 500 }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {agents.map(a => (
+                    <tr key={a.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '12px 12px' }}>
+                        <div style={{ fontWeight: 600 }}>{a.username}</div>
+                        <div className="text-muted text-xs" style={{ fontFamily: 'var(--font-mono)' }}>ID: {a.id.slice(0,8).toUpperCase()}</div>
+                      </td>
+                      <td style={{ padding: '12px 12px', fontSize: 13, color: 'var(--text-muted)' }}>
+                        {new Date(a.created_at).toLocaleDateString()}
+                      </td>
+                      <td style={{ padding: '12px 12px' }}>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button 
+                            className="btn btn-ghost text-xs" 
+                            style={{ padding: '4px 8px', color: 'var(--primary)' }}
+                            onClick={() => handleResetPassword(a.id, a.username)}
+                          >
+                            Reset Password
+                          </button>
+                          <button 
+                            className="btn btn-ghost text-xs" 
+                            style={{ padding: '4px 8px', color: 'var(--danger)' }}
+                            onClick={() => handleDeleteAgent(a.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
         {/* RIGHT COLUMN: LEAD UPLOAD */}
@@ -400,6 +472,44 @@ export function AdminDashboard() {
 
       </main>
       )}
+
+      {/* ── Password Modal ── */}
+      {passwordModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999
+        }}>
+          <div className="card" style={{ padding: 32, maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>
+              {passwordModal.isReset ? 'Password Reset Successful' : 'Agent Created'}
+            </h2>
+            <div style={{ background: 'var(--warning-dim)', border: '1px solid var(--warning)', padding: '12px 16px', borderRadius: 8, color: '#fff', fontSize: 14 }}>
+              <span style={{ marginRight: 8 }}>⚠</span>
+              Please copy these credentials now. For security reasons, the password will not be shown again.
+            </div>
+            
+            <div>
+              <label className="text-muted text-xs uppercase" style={{ fontWeight: 600 }}>Username</label>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, background: 'var(--bg-secondary)', padding: '8px 12px', borderRadius: 6, marginTop: 4 }}>
+                {passwordModal.username}
+              </div>
+            </div>
+            
+            <div>
+              <label className="text-muted text-xs uppercase" style={{ fontWeight: 600 }}>Password</label>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, background: 'var(--bg-secondary)', padding: '8px 12px', borderRadius: 6, marginTop: 4 }}>
+                {passwordModal.password}
+              </div>
+            </div>
+            
+            <button className="btn btn-primary" onClick={() => setPasswordModal(null)} style={{ marginTop: 8 }}>
+              I have copied it, close
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
