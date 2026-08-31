@@ -18,12 +18,16 @@ let currentLoopingOscillators: { osc1: OscillatorNode, osc2?: OscillatorNode, ga
 let loopTimeout: number | null = null;
 let isAlertPlaying = false; // Add flag to safely stop loops
 
-export function initAudioContext() {
+export async function initAudioContext() {
   if (!audioCtx) {
     audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
   }
   if (audioCtx.state === 'suspended') {
-    audioCtx.resume().catch(console.error);
+    try {
+      await audioCtx.resume();
+    } catch (err) {
+      console.error('[audio] Failed to resume AudioContext:', err);
+    }
   }
 }
 
@@ -38,10 +42,10 @@ export function getAudioMuted() {
   return isAudioMuted;
 }
 
-export function playDTMF(digit: string) {
+export async function playDTMF(digit: string) {
   console.log('[audio] playDTMF invoked for digit:', digit, 'isAudioMuted:', isAudioMuted);
   if (isAudioMuted) return;
-  initAudioContext();
+  await initAudioContext();
   if (!audioCtx) return;
   
   console.log('[audio] audioCtx state:', audioCtx.state);
@@ -57,33 +61,34 @@ export function playDTMF(digit: string) {
   osc1.frequency.value = freqs[0];
   osc2.frequency.value = freqs[1];
 
-  // Soft attack/release to avoid clicks
-  gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-  gainNode.gain.linearRampToValueAtTime(0.1, audioCtx.currentTime + 0.01);
-  gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime + 0.1);
-  gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.15);
+  const t = audioCtx.currentTime + 0.01; // 10ms lookahead for robust scheduling
+
+  gainNode.gain.setValueAtTime(0, t);
+  gainNode.gain.linearRampToValueAtTime(0.1, t + 0.01);
+  gainNode.gain.setValueAtTime(0.1, t + 0.1);
+  gainNode.gain.linearRampToValueAtTime(0, t + 0.15);
 
   osc1.connect(gainNode);
   osc2.connect(gainNode);
   gainNode.connect(audioCtx.destination);
 
-  osc1.start(audioCtx.currentTime);
-  osc2.start(audioCtx.currentTime);
-  osc1.stop(audioCtx.currentTime + 0.15);
-  osc2.stop(audioCtx.currentTime + 0.15);
+  osc1.start(t);
+  osc2.start(t);
+  osc1.stop(t + 0.15);
+  osc2.stop(t + 0.15);
 
   console.log('[audio] DTMF tone scheduled for digit:', digit);
 }
 
-export function playAlert(type: 'ringback' | 'connected' | 'failed' | 'inbound') {
+export async function playAlert(type: 'ringback' | 'connected' | 'failed' | 'inbound') {
   if (isAudioMuted) return;
-  initAudioContext();
+  await initAudioContext();
   if (!audioCtx) return;
   
   stopAlert(); // ensure no overlapping sounds
   isAlertPlaying = true;
 
-  const t0 = audioCtx.currentTime;
+  const t0 = audioCtx.currentTime + 0.01;
 
   if (type === 'connected') {
     // Short ascending chime (600Hz to 800Hz)
@@ -104,29 +109,21 @@ export function playAlert(type: 'ringback' | 'connected' | 'failed' | 'inbound')
     osc.start(t0);
     osc.stop(t0 + 0.3);
   } else if (type === 'failed') {
-    // Fast busy tone: 480Hz + 620Hz, 0.25s on, 0.25s off
-    const osc1 = audioCtx.createOscillator();
-    const osc2 = audioCtx.createOscillator();
+    const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     
-    osc1.type = 'sine';
-    osc2.type = 'sine';
-    osc1.frequency.value = 480;
-    osc2.frequency.value = 620;
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(300, t0);
+    osc.frequency.exponentialRampToValueAtTime(150, t0 + 0.2);
     
     gain.gain.setValueAtTime(0, t0);
-    gain.gain.linearRampToValueAtTime(0.1, t0 + 0.02);
-    gain.gain.setValueAtTime(0.1, t0 + 0.23);
+    gain.gain.linearRampToValueAtTime(0.2, t0 + 0.02);
     gain.gain.linearRampToValueAtTime(0, t0 + 0.25);
     
-    osc1.connect(gain);
-    osc2.connect(gain);
+    osc.connect(gain);
     gain.connect(audioCtx.destination);
-    
-    osc1.start(t0);
-    osc2.start(t0);
-    osc1.stop(t0 + 0.25);
-    osc2.stop(t0 + 0.25);
+    osc.start(t0);
+    osc.stop(t0 + 0.25);
   } else if (type === 'ringback') {
     // US ringback: 440Hz + 480Hz, 2s on, 4s off
     const playRingbackCycle = () => {
