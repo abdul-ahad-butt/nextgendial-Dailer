@@ -65,6 +65,8 @@ export const api = {
   agent: {
     getCallerId: () =>
       request<{ callerId: string }>('/agent/caller-id').then((r) => r.callerId),
+    getCredits: () =>
+      request<{ credits: number; allocated: number; spent: number }>('/agent/credits'),
     status: () =>
       request<{ status: AgentStatus; changed_at: string }>('/agent/status'),
     setStatus: (status: AgentStatus) =>
@@ -183,6 +185,9 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ phone_id, user_id }),
       }),
+
+    getTenant: () =>
+      request<{ data: any }>('/admin/tenant').then((r) => r.data),
   },
 
   // ── Campaigns ────────────────────────────────────────────
@@ -275,5 +280,61 @@ export const api = {
         method: 'PATCH',
         body: JSON.stringify(data),
       }).then((r) => r.data),
+  },
+
+  // ── Callbacks ────────────────────────────────────────────
+
+  callbacks: {
+    list: (params?: { status?: string; agent_id?: string; due_only?: boolean }) => {
+      const qs = new URLSearchParams();
+      if (params?.status) qs.set('status', params.status);
+      if (params?.agent_id) qs.set('agent_id', params.agent_id);
+      if (params?.due_only) qs.set('due_only', 'true');
+      const query = qs.toString();
+      return request<{ data: any[] }>(`/callbacks${query ? `?${query}` : ''}`).then((r) => r.data);
+    },
+
+    create: (data: {
+      lead_id?: string;
+      phone_number: string;
+      contact_name?: string;
+      scheduled_time: string;
+      assigned_agent_id?: string;
+      notes?: string;
+    }) =>
+      request<{ success: boolean; data: any }>('/callbacks', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+
+    update: (id: string, data: { status?: 'pending' | 'completed' | 'dismissed'; scheduled_time?: string; notes?: string }) =>
+      request<{ data: any }>(`/callbacks/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }).then((r) => r.data),
+
+    delete: (id: string) =>
+      request<{ success: boolean; id: string }>(`/callbacks/${id}`, {
+        method: 'DELETE',
+      }),
+  },
+
+  // ── Messages (2-Way SMS) ─────────────────────────────────
+
+  messages: {
+    list: (params?: { phone_number?: string; limit?: number; page?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.phone_number) qs.set('phone_number', params.phone_number);
+      if (params?.limit) qs.set('limit', String(params.limit));
+      if (params?.page) qs.set('page', String(params.page));
+      const query = qs.toString();
+      return request<{ data: any[]; total: number; page: number; limit: number }>(`/messages${query ? `?${query}` : ''}`);
+    },
+
+    send: (data: { to: string; body: string; from?: string }) =>
+      request<{ success: boolean; data: any }>('/messages', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
 };

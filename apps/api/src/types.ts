@@ -56,7 +56,8 @@ export interface Env {
  */
 export interface Variables {
   userId: string;
-  role: 'admin' | 'agent';
+  role: 'super_admin' | 'admin' | 'agent';
+  tenantId?: string;
 }
 
 /**

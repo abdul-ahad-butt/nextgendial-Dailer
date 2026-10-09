@@ -47,6 +47,7 @@ import {
   hangupCall,
 } from '../lib/telnyx';
 import { encodeClientState, decodeClientState } from '../lib/clientState';
+import { deductCallCredits, verifyPreCallCredits } from '../services/creditEngine';
 
 // ----------------------------------------------------------------
 // tryDialNextLead
@@ -67,6 +68,18 @@ export async function tryDialNextLead(env: Env, agentId: string): Promise<void> 
     // Another trigger already claimed this agent; bail out
     console.log(`[dialer] Agent ${agentId} already claimed — skipping`);
     return;
+  }
+
+  // Pre-flight Credit Verification for Agent's Tenant
+  const agentUser = await getAgentById(env.DB, agentId);
+  if (agentUser?.tenant_id) {
+    try {
+      await verifyPreCallCredits(env.DB, agentUser.tenant_id);
+    } catch (creditErr: any) {
+      console.warn(`[dialer] Dialing halted for agent ${agentId}: ${creditErr.message}`);
+      await updateAgentStatus(env.DB, agentId, 'available');
+      return;
+    }
   }
 
   let leadId: string | null = null;
@@ -375,6 +388,19 @@ async function handleCallHangup(
       hangup_cause: payload.hangup_cause ?? null,
     });
 
+    // Deduct call credits from tenant if applicable
+    if (callLog.tenant_id && duration && duration > 0) {
+      try {
+        await deductCallCredits(env.DB, {
+          tenantId: callLog.tenant_id,
+          callId: callLog.id,
+          durationSeconds: duration,
+        });
+      } catch (err: any) {
+        console.error('[dialer] Credit deduction error:', err?.message);
+      }
+    }
+
     // Set lead to 'contacted' (not completed — disposition does that)
     if (callLog.lead_id) {
       await updateLeadStatus(env.DB, callLog.lead_id, 'contacted');
@@ -421,7 +447,7 @@ async function handleCallHangup(
     await updateCallLog(env.DB, callLog.id, {
       status: newCallStatus,
       ended_at: nowStr(),
-      duration_seconds: duration,
+      duration_seconds: 0, // Unconnected call duration is strictly 0
       hangup_cause: hangupCause,
     });
 

@@ -3,7 +3,7 @@ import { verifyJWT } from './crypto';
 import type { AppEnv } from '../types';
 
 /**
- * Parses the Bearer token, verifies it, and attaches userId and role to context.
+ * Parses the Bearer token, verifies it, and attaches userId, role, and tenantId to context.
  */
 export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   const authHeader = c.req.header('Authorization');
@@ -22,20 +22,56 @@ export const authMiddleware = createMiddleware<AppEnv>(async (c, next) => {
   }
 
   c.set('userId', payload.sub);
-  c.set('role', payload.role as 'admin' | 'agent');
+  c.set('role', payload.role);
+
+  // If token has tenantId, attach it directly
+  if (payload.tenantId) {
+    c.set('tenantId', payload.tenantId);
+  } else if (payload.role !== 'super_admin') {
+    // Resolve tenantId from DB for existing users or tokens without tenantId in payload
+    try {
+      const user = await c.env.DB.prepare('SELECT tenant_id FROM users WHERE id = ?')
+        .bind(payload.sub)
+        .first<{ tenant_id: string | null }>();
+      if (user?.tenant_id) {
+        c.set('tenantId', user.tenant_id);
+      }
+    } catch {
+      // Non-fatal if table doesn't have column yet
+    }
+  }
 
   return next();
 });
 
 /**
- * Ensures the authenticated user has the specified role.
+ * Ensures the authenticated user has one of the specified roles.
  * Must be used AFTER authMiddleware.
  */
-export const requireRole = (role: 'admin' | 'agent') =>
+export const requireRole = (roleOrRoles: ('super_admin' | 'admin' | 'agent') | Array<'super_admin' | 'admin' | 'agent'>) =>
   createMiddleware<AppEnv>(async (c, next) => {
     const userRole = c.get('role');
-    if (userRole !== role) {
-      return c.json({ error: 'Forbidden' }, 403);
+    const allowed = Array.isArray(roleOrRoles) ? roleOrRoles : [roleOrRoles];
+    if (!allowed.includes(userRole)) {
+      return c.json({ error: 'Forbidden: Insufficient privileges' }, 403);
     }
     return next();
   });
+
+/**
+ * Ensures that the request has an active tenantId associated.
+ * Must be used AFTER authMiddleware.
+ */
+export const requireTenant = createMiddleware<AppEnv>(async (c, next) => {
+  const role = c.get('role');
+  if (role === 'super_admin') {
+    return next(); // Super admin bypasses tenant constraint
+  }
+
+  const tenantId = c.get('tenantId');
+  if (!tenantId) {
+    return c.json({ error: 'Tenant organization context required' }, 403);
+  }
+
+  return next();
+});

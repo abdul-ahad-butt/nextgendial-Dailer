@@ -18,6 +18,13 @@ export type {
   ManualCallBody,
   WebrtcTokenResponse,
   TelnyxWebhookEvent,
+  Tenant,
+  SuperAdmin,
+  CreditLedgerEntry,
+  PhoneInventoryItem,
+  Message,
+  Callback,
+  SuperAdminStats,
 } from '@nextgendial/shared-types';
 
 // Frontend-only: active call state surfaced by useTelnyxClient

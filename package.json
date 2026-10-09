@@ -6,9 +6,11 @@
     "dev": "concurrently \"pnpm run dev:api\" \"pnpm run dev:web\"",
     "dev:api": "pnpm --filter @nextgendial/api dev",
     "dev:web": "pnpm --filter @nextgendial/web dev",
+    "dev:super": "pnpm --filter @nextgendial/superadmin dev",
     "build:api": "pnpm --filter @nextgendial/api build",
     "build:web": "pnpm --filter @nextgendial/web build",
-    "typecheck": "pnpm --filter @nextgendial/api typecheck && pnpm --filter @nextgendial/web typecheck",
+    "build:super": "pnpm --filter @nextgendial/superadmin build",
+    "typecheck": "pnpm --filter @nextgendial/api typecheck && pnpm --filter @nextgendial/web typecheck && pnpm --filter @nextgendial/superadmin typecheck",
     "deploy:api": "pnpm --filter @nextgendial/api deploy"
   },
   "devDependencies": {

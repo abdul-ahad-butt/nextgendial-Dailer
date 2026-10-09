@@ -4,6 +4,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { api } from '../lib/api';
 import * as XLSX from 'xlsx';
 import { AdminNumbers } from './AdminNumbers';
+import { CustomSelect } from '../components/common/CustomSelect';
+import { GlassCard } from '../components/common/GlassCard';
+import { formatCurrency } from '../utils/formatters';
 
 interface User {
   id: string;
@@ -18,6 +21,23 @@ export function AdminDashboard() {
   
   // Tabs State
   const [activeTab, setActiveTab] = useState<'general' | 'numbers'>('general');
+
+  // Tenant / Credit State
+  const [tenantInfo, setTenantInfo] = useState<{
+    tenant: {
+      id: string;
+      name: string;
+      allocated_credits: number;
+      spent_credits: number;
+      remaining_credits: number;
+      max_agents: number;
+      is_active: number;
+    };
+    stats: {
+      agents_count: number;
+      total_calls: number;
+    };
+  } | null>(null);
 
   // Agent State
   const [agents, setAgents] = useState<User[]>([]);
@@ -38,7 +58,7 @@ export function AdminDashboard() {
   // Manual Mapping State
   const [needsManualMapping, setNeedsManualMapping] = useState(false);
   const [availableHeaders, setAvailableHeaders] = useState<string[]>([]);
-  const [selectedPhoneColIdx, setSelectedPhoneColIdx] = useState<number | ''>('');
+  const [selectedPhoneColIdx, setSelectedPhoneColIdx] = useState<string>('');
   const [pendingUploadData, setPendingUploadData] = useState<any>(null);
 
   // System Warning State
@@ -47,11 +67,57 @@ export function AdminDashboard() {
   // Password Modal State
   const [passwordModal, setPasswordModal] = useState<{ username: string; password?: string; isReset?: boolean } | null>(null);
 
+  const fetchTenantData = async () => {
+    try {
+      const res = await api.admin.getTenant();
+      if (res) setTenantInfo(res);
+    } catch (err) {
+      console.error('Failed to load tenant details', err);
+    }
+  };
+
+  const fetchAgents = async () => {
+    try {
+      const data = await api.admin.getAgents();
+      setAgents(data);
+    } catch (err) {
+      console.error('Failed to load agents', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchAgents();
+    fetchTenantData();
+    
+    const interval = setInterval(() => {
+      fetchAgents();
+      fetchTenantData();
+    }, 10000);
+    
+    // Check for systemic configuration failures
+    api.calls.list({ status: 'failed', limit: 5 })
+      .then(res => {
+        const failures = res.data;
+        if (failures.length >= 3) {
+          const recentConfigFailures = failures.slice(0, 3).every(call => 
+            call.failure_category === 'Rejected immediately — possible account/config issue'
+          );
+          if (recentConfigFailures) {
+            setSystemWarning('System Warning: The last 3 failed calls were immediately rejected. Please check your Telnyx balance, trial restrictions, or allocated credits.');
+          }
+        }
+      })
+      .catch(console.error);
+
+    return () => clearInterval(interval);
+  }, []);
+
   const handleDeleteAgent = async (agentId: string) => {
     if (!window.confirm("Are you sure you want to delete this agent? They will no longer be able to log in. Their call history will be preserved.")) return;
     try {
       await api.admin.deleteAgent(agentId);
       fetchAgents();
+      fetchTenantData();
     } catch (err: any) {
       alert(err.message || "Failed to delete agent");
     }
@@ -67,43 +133,6 @@ export function AdminDashboard() {
     }
   };
 
-
-
-  useEffect(() => {
-    fetchAgents();
-    
-    const interval = setInterval(() => {
-      fetchAgents();
-    }, 5000);
-    
-    // Check for recent systemic configuration failures
-    api.calls.list({ status: 'failed', limit: 5 })
-      .then(res => {
-        const failures = res.data;
-        if (failures.length >= 3) {
-          const recentConfigFailures = failures.slice(0, 3).every(call => 
-            call.failure_category === 'Rejected immediately — possible account/config issue'
-          );
-          if (recentConfigFailures) {
-            setSystemWarning('System Warning: The last 3 failed calls were immediately rejected. Please check your Telnyx account balance, trial restrictions, or Outbound Voice Profile settings.');
-          }
-        }
-      })
-      .catch(console.error);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchAgents = async () => {
-    try {
-      const data = await api.admin.getAgents();
-      setAgents(data);
-    } catch (err) {
-      console.error('Failed to load agents', err);
-    }
-  };
-
-
   const handleCreateAgent = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreatingAgent(true);
@@ -114,6 +143,7 @@ export function AdminDashboard() {
       setNewUsername('');
       setNewPassword('');
       fetchAgents();
+      fetchTenantData();
     } catch (err: any) {
       setAgentMessage({ type: 'error', text: err.message || 'Failed to create agent' });
     } finally {
@@ -122,7 +152,6 @@ export function AdminDashboard() {
   };
 
   const processLeads = async (rows: any[], headers: string[], manualPhoneIdx?: number) => {
-    // Fuzzy matching
     let phoneIdx = manualPhoneIdx !== undefined ? manualPhoneIdx : headers.findIndex(h => 
       ['phone', 'phonenumber', 'mobile', 'cell', 'contact', 'tel', 'number', 'num', 'usa', 'profilephone'].includes(h)
     );
@@ -142,7 +171,6 @@ export function AdminDashboard() {
     const parsedLeads = [];
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i] as any[];
-      // Skip entirely empty rows
       if (!row || row.length === 0 || row.every(cell => !cell)) continue;
 
       parsedLeads.push({
@@ -153,13 +181,11 @@ export function AdminDashboard() {
     }
 
     const assignedUserId = selectedAgentId === 'pool' ? null : (selectedAgentId === 'me' && user ? user.sub : selectedAgentId);
-    
-    // Default assignment_mode is 'assigned'. If 'pool' was selected, mode is 'pool'.
     const assignmentMode = selectedAgentId === 'pool' ? 'pool' : 'assigned';
     
     const result = await api.admin.uploadLeads(assignedUserId, file!.name, parsedLeads, assignmentMode);
     setUploadResult(result);
-    setFile(null); // Reset file
+    setFile(null);
     setUploading(false);
   };
 
@@ -207,309 +233,347 @@ export function AdminDashboard() {
     }
   };
 
+  const assignmentOptions = [
+    { value: 'pool', label: 'General Pool (Unassigned)' },
+    { value: 'me', label: 'Assign to me (Admin)' },
+    ...agents.map(a => ({ value: a.id, label: `Agent: ${a.username}` }))
+  ];
+
   return (
-    <div className="app-layout">
-      
+    <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-950">
       {/* ── Header ── */}
-      <header className="app-header">
-        <div className="app-logo">
-          <div className="app-logo-dot" aria-hidden="true" />
-          NextGenDial Admin
+      <header className="sticky top-0 z-40 bg-[#0E131F]/90 backdrop-blur-md border-b border-slate-800/80 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-bold text-sm shadow-md shadow-emerald-500/20">
+            N
+          </div>
+          <div>
+            <div className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
+              <span>NextGenDial Admin</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                TENANT PORTAL
+              </span>
+            </div>
+            {tenantInfo && (
+              <div className="text-[11px] text-slate-400 font-medium">Org: {tenantInfo.tenant.name}</div>
+            )}
+          </div>
         </div>
 
-        <div className="app-header-nav">
+        {/* Navigation Tabs */}
+        <div className="flex items-center gap-1 bg-slate-900/80 p-1 rounded-2xl border border-slate-800/80 text-xs font-medium">
           <button 
-            className={`btn ${activeTab === 'general' ? 'btn-primary' : 'btn-ghost'}`}
+            className={`px-3 py-1.5 rounded-xl transition-all ${activeTab === 'general' ? 'bg-emerald-500 text-slate-950 font-semibold shadow-md shadow-emerald-500/20' : 'text-slate-400 hover:text-slate-200'}`}
             onClick={() => setActiveTab('general')}
           >
             Dashboard
           </button>
-          <button className="btn btn-ghost" onClick={() => navigate('/admin/agent-status')}>Agent Status</button>
-          <button className="btn btn-ghost" onClick={() => navigate('/admin/leads')}>Leads</button>
-          <button className="btn btn-ghost" onClick={() => navigate('/admin/leadsheets')}>Lead Sheets</button>
+          <button className="px-3 py-1.5 rounded-xl text-slate-400 hover:text-slate-200 transition-colors" onClick={() => navigate('/admin/agent-status')}>Agent Status</button>
+          <button className="px-3 py-1.5 rounded-xl text-slate-400 hover:text-slate-200 transition-colors" onClick={() => navigate('/admin/leads')}>Leads</button>
+          <button className="px-3 py-1.5 rounded-xl text-slate-400 hover:text-slate-200 transition-colors" onClick={() => navigate('/admin/leadsheets')}>Lead Sheets</button>
           <button 
-            className={`btn ${activeTab === 'numbers' ? 'btn-primary' : 'btn-ghost'}`}
+            className={`px-3 py-1.5 rounded-xl transition-all ${activeTab === 'numbers' ? 'bg-emerald-500 text-slate-950 font-semibold shadow-md shadow-emerald-500/20' : 'text-slate-400 hover:text-slate-200'}`}
             onClick={() => setActiveTab('numbers')}
           >
             Phone Numbers
           </button>
           <button 
-            className="btn btn-ghost"
+            className="px-3 py-1.5 rounded-xl text-slate-400 hover:text-slate-200 transition-colors"
             onClick={() => navigate('/admin/recordings')}
           >
             Call Recordings
           </button>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button className="btn btn-ghost" onClick={logout}>Sign Out</button>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={logout}
+            className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-xl transition-colors"
+          >
+            Sign Out
+          </button>
         </div>
       </header>
 
       {/* ── System Warning Banner ── */}
       {systemWarning && (
-        <div style={{ background: '#473619', color: '#fff', border: '1px solid #d99616', padding: '12px 24px', textAlign: 'center', fontWeight: 500 }}>
-          <span style={{ marginRight: 8 }}>⚠</span>
-          {systemWarning}
+        <div className="bg-amber-950/80 border-b border-amber-800 px-6 py-2.5 text-xs text-amber-200 text-center font-medium animate-fade-in flex items-center justify-center gap-2">
+          <span>⚠️</span>
+          <span>{systemWarning}</span>
         </div>
       )}
 
-      {/* ── Main Layout ── */}
+      {/* ── Main Content ── */}
       {activeTab === 'numbers' ? (
-        <main className="main-content" style={{ width: '100%', flex: 1, overflowY: 'auto' }}>
+        <main className="flex-1 max-w-7xl w-full mx-auto p-6">
           <AdminNumbers />
         </main>
       ) : (
-      <main className="main-content" style={{ maxWidth: 1000, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 32 }}>
-        
-        <div>
-          <h1 style={{ fontSize: 20, margin: 0 }}>Dashboard</h1>
-          <p className="text-muted" style={{ margin: 0, marginTop: 4 }}>Manage agents and assign leads.</p>
-        </div>
-
-        <div className="dashboard-grid">
-        
-        {/* LEFT COLUMN: AGENT MANAGEMENT */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          
-          <div className="card" style={{ padding: 24 }}>
-            <h2 style={{ fontSize: 18, marginBottom: 16 }}>Create New Agent</h2>
-            {agentMessage && (
-              <p style={{
-                color: agentMessage.type === 'error' ? 'var(--danger)' : 'var(--success)',
-                fontSize: 13, padding: '10px 14px', borderRadius: 8,
-                background: agentMessage.type === 'error' ? 'var(--danger-dim)' : 'var(--success-dim)',
-                marginBottom: 16
-              }}>
-                {agentMessage.text}
-              </p>
-            )}
-            <form onSubmit={handleCreateAgent} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div className="form-group">
-                <label className="form-label" htmlFor="username">Username</label>
-                <input
-                  id="username"
-                  className={`form-control ${agentMessage?.type === 'error' ? 'is-invalid' : ''}`}
-                  type="text"
-                  value={newUsername}
-                  onChange={e => {
-                    setNewUsername(e.target.value);
-                    if (agentMessage?.type === 'error') setAgentMessage(null);
-                  }}
-                  required
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label" htmlFor="password">Password</label>
-                <input
-                  id="password"
-                  className={`form-control ${agentMessage?.type === 'error' ? 'is-invalid' : ''}`}
-                  type="password"
-                  value={newPassword}
-                  onChange={e => {
-                    setNewPassword(e.target.value);
-                    if (agentMessage?.type === 'error') setAgentMessage(null);
-                  }}
-                  required
-                />
-              </div>
-              <button type="submit" className="btn btn-primary" disabled={creatingAgent}>
-                {creatingAgent ? <span className="spinner" /> : 'Create Agent'}
-              </button>
-            </form>
-          </div>
-          
-          <div className="card" style={{ padding: 24, overflowX: 'auto' }}>
-            <h2 style={{ fontSize: 18, marginBottom: 16 }}>Active Agents</h2>
-            {agents.length === 0 ? (
-              <p className="text-muted text-sm">No active agents found.</p>
-            ) : (
-              <table className="table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '8px 12px', fontWeight: 500 }}>Agent</th>
-                    <th style={{ padding: '8px 12px', fontWeight: 500 }}>Created</th>
-                    <th style={{ padding: '8px 12px', fontWeight: 500 }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {agents.map(a => (
-                    <tr key={a.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '12px 12px' }}>
-                        <div style={{ fontWeight: 600 }}>{a.username}</div>
-                        <div className="text-muted text-xs" style={{ fontFamily: 'var(--font-mono)' }}>ID: {a.id.slice(0,8).toUpperCase()}</div>
-                      </td>
-                      <td style={{ padding: '12px 12px', fontSize: 13, color: 'var(--text-muted)' }}>
-                        {new Date(a.created_at).toLocaleDateString()}
-                      </td>
-                      <td style={{ padding: '12px 12px' }}>
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button 
-                            className="btn btn-ghost text-xs" 
-                            style={{ padding: '4px 8px', color: 'var(--primary)' }}
-                            onClick={() => handleResetPassword(a.id, a.username)}
-                          >
-                            Reset Password
-                          </button>
-                          <button 
-                            className="btn btn-ghost text-xs" 
-                            style={{ padding: '4px 8px', color: 'var(--danger)' }}
-                            onClick={() => handleDeleteAgent(a.id)}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </div>
-
-        {/* RIGHT COLUMN: LEAD UPLOAD */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-          
-          <div className="card" style={{ padding: 24 }}>
-            <h2 style={{ fontSize: 18, marginBottom: 16 }}>Upload Leads</h2>
-            
-            {uploadError && (
-              <p style={{ color: 'var(--danger)', fontSize: 13, padding: '10px 14px', background: 'var(--danger-dim)', borderRadius: 8, marginBottom: 16 }}>
-                {uploadError}
-              </p>
-            )}
-
-            {uploadResult && (
-              <div style={{ padding: '12px 16px', background: 'var(--success-dim)', borderRadius: 8, marginBottom: 16, fontSize: 14 }}>
-                <div style={{ color: 'var(--success)', fontWeight: 600, marginBottom: 4 }}>Upload Complete</div>
-                <div>Inserted: {uploadResult.inserted}</div>
-                <div>Skipped: {uploadResult.skipped}</div>
-                {uploadResult.errors?.length > 0 && (
-                  <ul style={{ marginTop: 8, paddingLeft: 20, color: 'var(--danger)' }}>
-                    {uploadResult.errors.map((err: string, i: number) => <li key={i}>{err}</li>)}
-                  </ul>
+        <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+          {/* Organization Credits & Quota Vitals Banner */}
+          {tenantInfo && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 animate-fade-in">
+              <GlassCard title="Prepaid Balance" subtitle="Calling & SMS Credits">
+                <div className="text-2xl font-bold font-mono text-emerald-400">
+                  {formatCurrency(tenantInfo.tenant.remaining_credits)}
+                </div>
+                <div className="text-xs text-slate-400 mt-1 flex items-center justify-between">
+                  <span>Allocated: {formatCurrency(tenantInfo.tenant.allocated_credits)}</span>
+                  <span>Spent: {formatCurrency(tenantInfo.tenant.spent_credits)}</span>
+                </div>
+                {tenantInfo.tenant.remaining_credits < 0.05 && (
+                  <div className="mt-2 text-[11px] text-rose-400 font-semibold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
+                    Depleted: Outbound calls locked out
+                  </div>
                 )}
-              </div>
-            )}
+              </GlassCard>
 
-            {needsManualMapping ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <p style={{ color: 'var(--warning)', fontSize: 14 }}>
-                  Could not automatically detect the phone number column. Please select it manually:
-                </p>
-                <div className="form-group">
-                  <label className="form-label">Phone Number Column</label>
-                  <select 
-                    className="form-control"
-                    value={selectedPhoneColIdx}
-                    onChange={e => setSelectedPhoneColIdx(e.target.value === '' ? '' : Number(e.target.value))}
+              <GlassCard title="Agent Seat Quota" subtitle="Configured by Super Admin">
+                <div className="text-2xl font-bold font-mono text-sky-400">
+                  {tenantInfo.stats.agents_count} / {tenantInfo.tenant.max_agents}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {tenantInfo.tenant.max_agents - tenantInfo.stats.agents_count} seats remaining
+                </div>
+              </GlassCard>
+
+              <GlassCard title="Total Calls Logged" subtitle="Lifetime outbound volume">
+                <div className="text-2xl font-bold font-mono text-indigo-400">
+                  {tenantInfo.stats.total_calls}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">Rate: ~$0.015 / minute</div>
+              </GlassCard>
+
+              <GlassCard title="Organization Status" subtitle="Telephony Line Health">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-lg font-semibold text-white">
+                    {tenantInfo.tenant.is_active ? 'Active & Verified' : 'Suspended'}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-400 mt-1">Telnyx Master SIP Connected</div>
+              </GlassCard>
+            </div>
+          )}
+
+          {/* Grid Layout */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* LEFT COLUMN: AGENT MANAGEMENT */}
+            <div className="lg:col-span-6 space-y-6">
+              <GlassCard title="Create New Agent" subtitle="Provision agent login credentials">
+                {agentMessage && (
+                  <div className={`p-3 rounded-xl text-xs mb-4 ${agentMessage.type === 'error' ? 'bg-rose-500/10 border border-rose-500/20 text-rose-300' : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-300'}`}>
+                    {agentMessage.text}
+                  </div>
+                )}
+                <form onSubmit={handleCreateAgent} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Username
+                    </label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                      value={newUsername}
+                      onChange={e => setNewUsername(e.target.value)}
+                      placeholder="e.g. agent_sarah"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                      Password
+                    </label>
+                    <input
+                      type="password"
+                      className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-emerald-500"
+                      value={newPassword}
+                      onChange={e => setNewPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      required
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    disabled={creatingAgent}
+                    className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs rounded-xl shadow-lg shadow-emerald-500/20 active:scale-98 transition-all disabled:opacity-50"
                   >
-                    <option value="" disabled>Select a column...</option>
-                    {availableHeaders.map((h, i) => (
-                      <option key={i} value={i}>{h || `Column ${i + 1}`}</option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ display: 'flex', gap: 12 }}>
-                  <button className="btn btn-primary" onClick={confirmManualUpload} disabled={uploading || selectedPhoneColIdx === ''}>
-                    {uploading ? <span className="spinner" /> : 'Confirm & Upload'}
+                    {creatingAgent ? 'Creating Agent...' : 'Create Agent'}
                   </button>
-                  <button className="btn btn-ghost" onClick={() => { setNeedsManualMapping(false); setPendingUploadData(null); }} disabled={uploading}>
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <form onSubmit={handleUploadLeads} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="agent-select">Assign To</label>
-                  <select 
-                    id="agent-select" 
-                    className="form-control" 
-                    value={selectedAgentId} 
-                    onChange={e => setSelectedAgentId(e.target.value)}
-                    required
-                  >
-                    <option value="" disabled>Select assignment...</option>
-                    <option value="pool">General Pool (Unassigned)</option>
-                    <option value="me">Assign to me (Admin)</option>
-                    <optgroup label="Agents">
-                      {agents.map(a => (
-                        <option key={a.id} value={a.id}>{a.username}</option>
-                      ))}
-                    </optgroup>
-                  </select>
-                </div>
+                </form>
+              </GlassCard>
 
-                <div className="form-group">
-                  <label className="form-label" htmlFor="csv-file">Spreadsheet File (.csv, .xlsx)</label>
-                  <input 
-                    id="csv-file" 
-                    type="file" 
-                    accept=".csv,.xlsx,.xls"
-                    className="form-control" 
-                    style={{ padding: '8px 12px' }}
-                    onChange={e => setFile(e.target.files?.[0] || null)}
-                    required
-                  />
-                  <p className="text-muted text-sm mt-2">
-                    Header row required. Automatically detects columns like "Phone", "Mobile", "First Name", "Last".
-                  </p>
-                </div>
+              {/* Active Agents Table */}
+              <GlassCard title="Active Agents" subtitle={`${agents.length} agents currently registered`}>
+                {agents.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-slate-500">
+                    No active agents registered yet.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase tracking-wider text-[11px]">
+                          <th className="py-2.5 px-3">Agent</th>
+                          <th className="py-2.5 px-3">Created</th>
+                          <th className="py-2.5 px-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {agents.map(a => (
+                          <tr key={a.id} className="hover:bg-slate-800/30 transition-colors">
+                            <td className="py-3 px-3">
+                              <div className="font-semibold text-slate-200">{a.username}</div>
+                              <div className="text-[10px] text-slate-400 font-mono">ID: {a.id.slice(0, 8)}</div>
+                            </td>
+                            <td className="py-3 px-3 text-slate-400">
+                              {new Date(a.created_at).toLocaleDateString()}
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <div className="inline-flex items-center gap-2">
+                                <button
+                                  onClick={() => handleResetPassword(a.id, a.username)}
+                                  className="px-2.5 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition-colors"
+                                >
+                                  Reset Password
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteAgent(a.id)}
+                                  className="px-2.5 py-1 text-[11px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 rounded-lg border border-rose-500/30 transition-colors"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </GlassCard>
+            </div>
 
-                <button type="submit" className="btn btn-primary" disabled={uploading || !selectedAgentId || !file}>
-                  {uploading ? <span className="spinner" /> : 'Process & Upload Leads'}
-                </button>
-              </form>
-            )}
+            {/* RIGHT COLUMN: LEAD UPLOAD */}
+            <div className="lg:col-span-6 space-y-6">
+              <GlassCard title="Upload Leads" subtitle="Bulk import leads via CSV or Excel (.xlsx)">
+                {uploadError && (
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs mb-4">
+                    {uploadError}
+                  </div>
+                )}
+
+                {uploadResult && (
+                  <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs mb-4 space-y-1">
+                    <div className="font-semibold">✓ Upload Complete</div>
+                    <div>Inserted: {uploadResult.inserted} leads (E.164 normalized)</div>
+                    <div>Skipped: {uploadResult.skipped}</div>
+                  </div>
+                )}
+
+                {needsManualMapping ? (
+                  <div className="space-y-4">
+                    <p className="text-xs text-amber-300 bg-amber-500/10 p-3 rounded-xl border border-amber-500/20">
+                      Could not automatically detect the phone number column. Please select it manually:
+                    </p>
+                    <CustomSelect
+                      label="Phone Number Column"
+                      value={selectedPhoneColIdx}
+                      onChange={val => setSelectedPhoneColIdx(val)}
+                      placeholder="Select phone column..."
+                      options={availableHeaders.map((h, i) => ({
+                        value: String(i),
+                        label: h || `Column ${i + 1}`,
+                      }))}
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={confirmManualUpload}
+                        disabled={uploading || selectedPhoneColIdx === ''}
+                        className="flex-1 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs rounded-xl shadow-md transition-all disabled:opacity-50"
+                      >
+                        {uploading ? 'Processing...' : 'Confirm & Upload'}
+                      </button>
+                      <button
+                        onClick={() => { setNeedsManualMapping(false); setPendingUploadData(null); }}
+                        className="px-4 py-2 bg-slate-800 text-slate-300 text-xs rounded-xl hover:bg-slate-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <form onSubmit={handleUploadLeads} className="space-y-4">
+                    {/* Modern CustomSelect replacing native <select> */}
+                    <CustomSelect
+                      label="Assign To"
+                      value={selectedAgentId}
+                      onChange={val => setSelectedAgentId(val)}
+                      options={assignmentOptions}
+                      placeholder="Select assignment..."
+                    />
+
+                    <div>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                        Spreadsheet File (.CSV, .XLSX)
+                      </label>
+                      <input
+                        type="file"
+                        accept=".csv,.xlsx,.xls"
+                        onChange={e => setFile(e.target.files?.[0] || null)}
+                        required
+                        className="w-full bg-slate-950/80 border border-slate-700/80 rounded-xl p-2.5 text-xs text-slate-300 file:mr-3 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700"
+                      />
+                      <p className="text-[11px] text-slate-500 mt-1.5">
+                        Header row required. Automatically detects columns like "Phone", "Mobile", "First Name", "Last". Numbers are normalized to E.164.
+                      </p>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={uploading || !selectedAgentId || !file}
+                      className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold text-xs rounded-xl shadow-lg shadow-emerald-500/20 active:scale-98 transition-all disabled:opacity-40"
+                    >
+                      {uploading ? 'Processing & Normalizing Leads...' : 'Process & Upload Leads'}
+                    </button>
+                  </form>
+                )}
+              </GlassCard>
+            </div>
           </div>
-
-        </div>
-
-        </div>
-
-
-      </main>
+        </main>
       )}
 
-      {/* ── Password Modal ── */}
+      {/* Password Modal */}
       {passwordModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          zIndex: 9999
-        }}>
-          <div className="card" style={{ padding: 32, maxWidth: 400, width: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>
-              {passwordModal.isReset ? 'Password Reset Successful' : 'Agent Created'}
-            </h2>
-            <div style={{ background: 'var(--warning-dim)', border: '1px solid var(--warning)', padding: '12px 16px', borderRadius: 8, color: '#fff', fontSize: 14 }}>
-              <span style={{ marginRight: 8 }}>⚠</span>
-              Please copy these credentials now. For security reasons, the password will not be shown again.
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+          <div className="w-full max-w-sm bg-[#0F1422] border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+            <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 text-lg">
+              🔑
             </div>
-            
             <div>
-              <label className="text-muted text-xs uppercase" style={{ fontWeight: 600 }}>Username</label>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, background: 'var(--bg-secondary)', padding: '8px 12px', borderRadius: 6, marginTop: 4 }}>
-                {passwordModal.username}
-              </div>
+              <h3 className="text-base font-semibold text-white">
+                {passwordModal.isReset ? 'Password Reset Successful' : 'Agent Created'}
+              </h3>
+              <p className="text-xs text-slate-400 mt-1">
+                Credentials for <strong>{passwordModal.username}</strong>:
+              </p>
             </div>
-            
-            <div>
-              <label className="text-muted text-xs uppercase" style={{ fontWeight: 600 }}>Password</label>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 16, background: 'var(--bg-secondary)', padding: '8px 12px', borderRadius: 6, marginTop: 4 }}>
-                {passwordModal.password}
-              </div>
+            <div className="p-3 rounded-2xl bg-slate-950 border border-slate-800 font-mono text-xs space-y-1">
+              <div>Username: <span className="text-slate-200">{passwordModal.username}</span></div>
+              {passwordModal.password && (
+                <div>Password: <span className="text-emerald-400 font-bold">{passwordModal.password}</span></div>
+              )}
             </div>
-            
-            <button className="btn btn-primary" onClick={() => setPasswordModal(null)} style={{ marginTop: 8 }}>
-              I have copied it, close
+            <button
+              onClick={() => setPasswordModal(null)}
+              className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl"
+            >
+              Done
             </button>
           </div>
         </div>
       )}
-
     </div>
   );
 }

@@ -130,8 +130,16 @@ export async function verifyPassword(password: string, stored: string): Promise<
 
 // ── JWT ───────────────────────────────────────────────────────
 
+export interface JWTPayload {
+  sub: string;
+  role: 'super_admin' | 'admin' | 'agent';
+  tenantId?: string;
+  iat?: number;
+  exp?: number;
+}
+
 export async function signJWT(
-  payload: { sub: string; role: 'admin' | 'agent' },
+  payload: { sub: string; role: 'super_admin' | 'admin' | 'agent'; tenantId?: string },
   secret: string | undefined,
   expiresInSeconds = 86400
 ): Promise<string> {
@@ -169,7 +177,7 @@ export async function signJWT(
   return `${dataToSign}.${encodedSignature}`;
 }
 
-export async function verifyJWT(token: string, secret: string | undefined): Promise<{ sub: string; role: string } | null> {
+export async function verifyJWT(token: string, secret: string | undefined): Promise<JWTPayload | null> {
   if (!secret) {
     console.error('JWT_SECRET is not configured on the server.');
     return null;
@@ -202,7 +210,7 @@ export async function verifyJWT(token: string, secret: string | undefined): Prom
     if (!isValid) return null;
 
     const decodedPayloadStr = new TextDecoder().decode(base64UrlToBuffer(encodedPayload));
-    const payload = JSON.parse(decodedPayloadStr);
+    const payload = JSON.parse(decodedPayloadStr) as JWTPayload;
 
     if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
       return null; // Expired
@@ -213,3 +221,4 @@ export async function verifyJWT(token: string, secret: string | undefined): Prom
     return null; // parse or verification error
   }
 }
+

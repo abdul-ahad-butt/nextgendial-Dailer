@@ -1,16 +1,87 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import type { AppEnv } from '../types';
 import { authMiddleware, requireRole } from '../auth/middleware';
 import { hashPassword } from '../auth/crypto';
+import { normalizeToE164, isValidE164 } from '../utils/phone';
+import { getTenantBalance } from '../services/creditEngine';
 
 const admin = new Hono<AppEnv>();
 
-// Apply auth + requireRole('admin') to all routes in this module
+// Apply auth + requireRole('admin') or 'super_admin' to all routes in this module
 admin.use('*', authMiddleware);
-admin.use('*', requireRole('admin'));
+admin.use('*', requireRole(['admin', 'super_admin']));
 
+// Helper to get effective tenantId for the current admin
+async function getEffectiveTenantId(c: Context<AppEnv>): Promise<string> {
+  let tenantId = c.get('tenantId');
+  if (tenantId) return tenantId;
+
+  const userId = c.get('userId');
+  const user = await c.env.DB.prepare('SELECT tenant_id FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ tenant_id: string | null }>();
+
+  if (user?.tenant_id) {
+    c.set('tenantId', user.tenant_id);
+    return user.tenant_id;
+  }
+
+  // Fallback to default tenant if none assigned
+  const def = await c.env.DB.prepare('SELECT id FROM tenants LIMIT 1').first<{ id: string }>();
+  if (def?.id) {
+    await c.env.DB.prepare('UPDATE users SET tenant_id = ? WHERE id = ?').bind(def.id, userId).run();
+    c.set('tenantId', def.id);
+    return def.id;
+  }
+
+  const newDefId = crypto.randomUUID();
+  await c.env.DB.prepare(`
+    INSERT INTO tenants (id, name, admin_username, admin_password_hash, allocated_credits, spent_credits, max_agents, is_active)
+    VALUES (?, 'Default Organization', 'admin', 'placeholder', 25.00, 0.00, 10, 1)
+  `).bind(newDefId).run();
+  await c.env.DB.prepare('UPDATE users SET tenant_id = ? WHERE id = ?').bind(newDefId, userId).run();
+  c.set('tenantId', newDefId);
+  return newDefId;
+}
+
+// ----------------------------------------------------------------
+// GET /admin/tenant — Current tenant overview & prepaid credit balance
+// ----------------------------------------------------------------
+admin.get('/tenant', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const balance = await getTenantBalance(c.env.DB, tenantId);
+
+  // Fetch assigned numbers
+  const { results: numbers } = await c.env.DB.prepare(`
+    SELECT phone_number, friendly_name, assigned_agent_id
+    FROM phone_inventory
+    WHERE assigned_tenant_id = ?
+  `).bind(tenantId).all();
+
+  // Fetch tenant info
+  const tenantRow = await c.env.DB.prepare(`
+    SELECT max_agents, is_active FROM tenants WHERE id = ?
+  `).bind(tenantId).first<{ max_agents: number; is_active: number }>();
+
+  return c.json({
+    data: {
+      id: tenantId,
+      name: balance?.name || 'Organization',
+      allocated_credits: balance?.allocated_credits ?? 0,
+      spent_credits: balance?.spent_credits ?? 0,
+      remaining_balance: balance?.remaining_balance ?? 0,
+      max_agents: tenantRow?.max_agents ?? 5,
+      is_active: Boolean(tenantRow?.is_active ?? 1),
+      assigned_numbers: numbers || [],
+    },
+  });
+});
+
+// ----------------------------------------------------------------
+// Agent Management (Scoped to Tenant + Max Agents Limit)
+// ----------------------------------------------------------------
 const createUserSchema = z.object({
   username: z.string().min(1),
   password: z.string().min(1),
@@ -20,8 +91,26 @@ admin.post('/agents', zValidator('json', createUserSchema), async (c) => {
   const { username, password } = c.req.valid('json');
   const trimmedUsername = username.trim();
   const trimmedPassword = password.trim();
+  const tenantId = await getEffectiveTenantId(c);
 
-  // Reject if username already exists (case-insensitive check is better here too)
+  // Check tenant max_agents constraint
+  const tenantRow = await c.env.DB.prepare('SELECT max_agents FROM tenants WHERE id = ?')
+    .bind(tenantId)
+    .first<{ max_agents: number }>();
+  const maxAgents = tenantRow?.max_agents ?? 5;
+
+  const currentCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as cnt FROM users 
+    WHERE tenant_id = ? AND role = 'agent' AND COALESCE(status, 'offline') != 'deleted'
+  `).bind(tenantId).first<{ cnt: number }>();
+
+  if ((currentCount?.cnt ?? 0) >= maxAgents) {
+    return c.json({
+      error: `Agent limit reached (${maxAgents} max allowed for your organization). Contact Super Admin to increase limit.`,
+    }, 403);
+  }
+
+  // Reject if username already exists
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE LOWER(username) = LOWER(?)')
     .bind(trimmedUsername)
     .first();
@@ -30,22 +119,10 @@ admin.post('/agents', zValidator('json', createUserSchema), async (c) => {
     return c.json({ error: 'Username already exists' }, 409);
   }
 
-  // Hash password, insert as 'agent'
   const id = crypto.randomUUID();
   const passwordHash = await hashPassword(trimmedPassword);
   const role = 'agent';
   const sipUsername = `agent_${id.replace(/-/g, '')}`;
-
-  // Self-Healing Schema Guard for new columns
-  try {
-    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'offline';").run();
-  } catch (e) {}
-  try {
-    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN telnyx_credential_id TEXT;").run();
-  } catch (e) {}
-  try {
-    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN telnyx_sip_username TEXT;").run();
-  } catch (e) {}
 
   // Create Telephony Credential on Telnyx
   let telnyxCredentialId = null;
@@ -56,66 +133,70 @@ admin.post('/agents', zValidator('json', createUserSchema), async (c) => {
         headers: {
           'Authorization': `Bearer ${c.env.TELNYX_API_KEY}`,
           'Content-Type': 'application/json',
-          'Accept': 'application/json'
+          'Accept': 'application/json',
         },
         body: JSON.stringify({
           connection_id: c.env.TELNYX_CONNECTION_ID,
           sip_username: sipUsername,
-          sip_password: crypto.randomUUID().slice(0, 16) + 'Aa1!' // Requires complexity
-        })
+          sip_password: crypto.randomUUID().slice(0, 16) + 'Aa1!',
+        }),
       });
-      
+
       if (telnyxRes.ok) {
         const telnyxData = await telnyxRes.json() as any;
-        telnyxCredentialId = telnyxData.data.id;
-      } else {
-        console.error('[telnyx] failed to create telephony credential:', await telnyxRes.text());
+        telnyxCredentialId = telnyxData.data?.id;
       }
     } catch (e) {
       console.error('[telnyx] error creating telephony credential:', e);
     }
   }
 
-  await c.env.DB.prepare(
-    'INSERT INTO users (id, username, password_hash, role, telnyx_credential_id, telnyx_sip_username, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  )
-    .bind(id, trimmedUsername, passwordHash, role, telnyxCredentialId, sipUsername, 'offline')
-    .run();
+  await c.env.DB.prepare(`
+    INSERT INTO users (id, username, password_hash, role, tenant_id, telnyx_credential_id, telnyx_sip_username, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'offline', datetime('now'))
+  `).bind(id, trimmedUsername, passwordHash, role, tenantId, telnyxCredentialId, sipUsername).run();
 
-  // Return the created user (omitting password_hash)
+  await c.env.DB.prepare(`
+    INSERT INTO agents (id, name, email, tenant_id, telnyx_credential_id, telnyx_sip_username, status)
+    VALUES (?, ?, ?, ?, ?, ?, 'offline')
+    ON CONFLICT(id) DO UPDATE SET tenant_id = excluded.tenant_id
+  `).bind(id, trimmedUsername, `${trimmedUsername}@system.local`, tenantId, telnyxCredentialId, sipUsername).run();
+
   const createdUser = await c.env.DB.prepare(
-    'SELECT id, username, role, created_at, status, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?'
-  )
-    .bind(id)
-    .first();
+    'SELECT id, username, role, tenant_id, created_at, status, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?'
+  ).bind(id).first();
 
   return c.json({ data: createdUser }, 201);
 });
 
 admin.get('/agents', async (c) => {
-  // Return all users with role='agent' ordered by created_at DESC
-  const { results } = await c.env.DB.prepare(
-    `SELECT id, username, created_at, status
-     FROM users 
-     WHERE role = 'agent' AND COALESCE(status, 'offline') != 'deleted'
-     ORDER BY created_at DESC`
-  ).all();
+  const tenantId = await getEffectiveTenantId(c);
+  const { results } = await c.env.DB.prepare(`
+    SELECT id, username, role, tenant_id, created_at, status
+    FROM users 
+    WHERE role = 'agent' AND tenant_id = ? AND COALESCE(status, 'offline') != 'deleted'
+    ORDER BY created_at DESC
+  `).bind(tenantId).all();
 
-  return c.json({ data: results });
+  return c.json({ data: results || [] });
 });
 
 admin.delete('/agents/:id', async (c) => {
   const id = c.req.param('id');
+  const tenantId = await getEffectiveTenantId(c);
 
-  const agent = await c.env.DB.prepare("SELECT id FROM users WHERE id = ? AND role = 'agent'").bind(id).first();
+  const agent = await c.env.DB.prepare("SELECT id FROM users WHERE id = ? AND role = 'agent' AND tenant_id = ?")
+    .bind(id, tenantId)
+    .first();
+
   if (!agent) {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  // Soft delete by setting status to 'deleted'
   await c.env.DB.batch([
     c.env.DB.prepare("UPDATE users SET status = 'deleted' WHERE id = ?").bind(id),
-    c.env.DB.prepare("UPDATE agent_status SET status = 'offline' WHERE user_id = ?").bind(id)
+    c.env.DB.prepare("UPDATE agent_status SET status = 'offline' WHERE user_id = ?").bind(id),
+    c.env.DB.prepare("UPDATE phone_inventory SET assigned_agent_id = NULL WHERE assigned_agent_id = ?").bind(id),
   ]);
 
   return c.json({ success: true, deleted_agent_id: id });
@@ -123,14 +204,17 @@ admin.delete('/agents/:id', async (c) => {
 
 admin.post('/agents/:id/reset-password', async (c) => {
   const id = c.req.param('id');
+  const tenantId = await getEffectiveTenantId(c);
 
-  const agent = await c.env.DB.prepare("SELECT id, username FROM users WHERE id = ? AND role = 'agent'").bind(id).first();
+  const agent = await c.env.DB.prepare("SELECT id, username FROM users WHERE id = ? AND role = 'agent' AND tenant_id = ?")
+    .bind(id, tenantId)
+    .first();
+
   if (!agent) {
     return c.json({ error: 'Agent not found' }, 404);
   }
 
-  // Generate secure random password
-  const newPassword = crypto.randomUUID().replace(/-/g, '').slice(0, 12) + 'A1!'; 
+  const newPassword = crypto.randomUUID().replace(/-/g, '').slice(0, 12) + 'A1!';
   const passwordHash = await hashPassword(newPassword);
 
   await c.env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?").bind(passwordHash, id).run();
@@ -138,6 +222,9 @@ admin.post('/agents/:id/reset-password', async (c) => {
   return c.json({ success: true, new_password: newPassword });
 });
 
+// ----------------------------------------------------------------
+// Lead Upload with E.164 Normalization & Tenant Scoping
+// ----------------------------------------------------------------
 const uploadLeadsSchema = z.object({
   assigned_user_id: z.string().nullable(),
   file_name: z.string().min(1),
@@ -151,38 +238,7 @@ const uploadLeadsSchema = z.object({
 
 admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => {
   const { assigned_user_id, file_name, leads, assignment_mode } = c.req.valid('json');
-  const requestingAdminId = c.get('userId');
-
-  // Auto-Initialization Safeguard
-  await c.env.DB.batch([
-    c.env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS lead_batches (
-        id TEXT PRIMARY KEY,
-        file_name TEXT NOT NULL,
-        total_leads INTEGER NOT NULL DEFAULT 0,
-        assigned_user_id TEXT REFERENCES users(id),
-        uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-        assignment_mode TEXT NOT NULL DEFAULT 'assigned' CHECK (assignment_mode IN ('assigned', 'pool'))
-      )
-    `)
-  ]);
-
-  try {
-    await c.env.DB.prepare("ALTER TABLE leads ADD COLUMN batch_id TEXT REFERENCES lead_batches(id);").run();
-  } catch (e) {
-    // Column already exists
-  }
-
-  // Validate assigned_user_id
-  if (assigned_user_id !== null && assigned_user_id !== requestingAdminId) {
-    const agent = await c.env.DB.prepare(
-      "SELECT id FROM users WHERE id = ? AND role = 'agent'"
-    ).bind(assigned_user_id).first();
-
-    if (!agent) {
-      return c.json({ error: 'Assigned user must exist and be an agent, or be the current admin' }, 400);
-    }
-  }
+  const tenantId = await getEffectiveTenantId(c);
 
   const batchId = crypto.randomUUID();
   const validLeads = [];
@@ -191,283 +247,141 @@ admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => 
 
   for (let i = 0; i < leads.length; i++) {
     const lead = leads[i]!;
-    const phone = lead.phone_number?.trim();
-    
-    if (!phone) {
+    const rawPhone = lead.phone_number?.trim();
+
+    if (!rawPhone) {
       skipped++;
       errors.push(`Row ${i + 1}: Missing or empty phone_number`);
       continue;
     }
-    
+
+    const normalizedPhone = normalizeToE164(rawPhone);
+    if (!isValidE164(normalizedPhone)) {
+      skipped++;
+      errors.push(`Row ${i + 1}: Invalid telephone number format: ${rawPhone}`);
+      continue;
+    }
+
     validLeads.push({
       id: crypto.randomUUID(),
-      phone_number: phone,
+      phone_number: normalizedPhone,
       first_name: lead.first_name || null,
       last_name: lead.last_name || null,
     });
   }
 
   if (validLeads.length > 0) {
-    // We will chunk the statements to avoid hitting D1 batch size limits.
-    // D1 allows a maximum of 100 statements per batch() call historically, 
-    // although newer limits may be higher.
     const CHUNK_SIZE = 100;
-    
-    // The first statement of the first chunk will be the batch creation
-    const batchCreateStmt = c.env.DB.prepare(
-      `INSERT INTO lead_batches (id, file_name, total_leads, assigned_user_id, assignment_mode) VALUES (?, ?, ?, ?, ?)`
-    ).bind(batchId, file_name, validLeads.length, assigned_user_id, assignment_mode);
-    
-    const leadInsertStmt = c.env.DB.prepare(
-      `INSERT OR IGNORE INTO leads (id, assigned_user_id, batch_id, phone_number, first_name, last_name, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending')`
+
+    const batchCreateStmt = c.env.DB.prepare(`
+      INSERT INTO lead_batches (id, tenant_id, file_name, total_leads, assigned_user_id, assignment_mode, uploaded_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `).bind(batchId, tenantId, file_name, validLeads.length, assigned_user_id, assignment_mode);
+
+    const leadInsertStmt = c.env.DB.prepare(`
+      INSERT OR IGNORE INTO leads (id, tenant_id, assigned_user_id, batch_id, phone_number, first_name, last_name, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'))
+    `);
+
+    const allLeadStmts = validLeads.map((l) =>
+      leadInsertStmt.bind(l.id, tenantId, assigned_user_id, batchId, l.phone_number, l.first_name, l.last_name)
     );
 
-    const allLeadStmts = validLeads.map(l => 
-      leadInsertStmt.bind(l.id, assigned_user_id, batchId, l.phone_number, l.first_name, l.last_name)
-    );
-
-    // Add the batch creation as the very first statement
     const allStmts = [batchCreateStmt, ...allLeadStmts];
 
-    // Chunk into arrays of CHUNK_SIZE
     for (let i = 0; i < allStmts.length; i += CHUNK_SIZE) {
       const chunk = allStmts.slice(i, i + CHUNK_SIZE);
       await c.env.DB.batch(chunk);
     }
   } else {
-    // If no valid leads, still create the empty batch to be consistent
-    await c.env.DB.prepare(
-      `INSERT INTO lead_batches (id, file_name, total_leads, assigned_user_id, assignment_mode) VALUES (?, ?, 0, ?, ?)`
-    ).bind(batchId, file_name, assigned_user_id, assignment_mode).run();
+    await c.env.DB.prepare(`
+      INSERT INTO lead_batches (id, tenant_id, file_name, total_leads, assigned_user_id, assignment_mode, uploaded_at)
+      VALUES (?, ?, ?, 0, ?, ?, datetime('now'))
+    `).bind(batchId, tenantId, file_name, assigned_user_id, assignment_mode).run();
   }
 
   return c.json({
     batch_id: batchId,
     inserted: validLeads.length,
     skipped,
-    errors
+    errors,
   });
 });
 
-admin.get('/leads/batches', async (c) => {
-  // Auto-Initialization Safeguard
-  await c.env.DB.batch([
-    c.env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS lead_batches (
-        id TEXT PRIMARY KEY,
-        file_name TEXT NOT NULL,
-        total_leads INTEGER NOT NULL DEFAULT 0,
-        assigned_user_id TEXT REFERENCES users(id),
-        uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
-        assignment_mode TEXT NOT NULL DEFAULT 'assigned' CHECK (assignment_mode IN ('assigned', 'pool'))
-      )
-    `)
-  ]);
+// ----------------------------------------------------------------
+// Phone Numbers Management (Scoped to Tenant's Assigned Numbers)
+// ----------------------------------------------------------------
+admin.get('/phone-numbers', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
 
-  try {
-    await c.env.DB.prepare("ALTER TABLE leads ADD COLUMN batch_id TEXT REFERENCES lead_batches(id);").run();
-  } catch (e) {
-    // Column already exists
-  }
-
-  const { results } = await c.env.DB.prepare(
-    `SELECT 
-       lb.id, 
-       lb.file_name, 
-       lb.total_leads, 
-       lb.uploaded_at, 
-       lb.assignment_mode,
-       u.username as assigned_agent_username,
-       SUM(CASE WHEN l.status != 'pending' THEN 1 ELSE 0 END) as dialed_count,
-       SUM(CASE WHEN l.status = 'completed' THEN 1 ELSE 0 END) as completed_count,
-       SUM(CASE WHEN l.status = 'pending' THEN 1 ELSE 0 END) as pending_count
-     FROM lead_batches lb
-     LEFT JOIN users u ON lb.assigned_user_id = u.id
-     LEFT JOIN leads l ON lb.id = l.batch_id
-     GROUP BY lb.id
-     ORDER BY lb.uploaded_at DESC`
-  ).all();
-
-  return c.json({ data: results });
-});
-
-admin.delete('/leads/batch/:id', async (c) => {
-  const id = c.req.param('id');
-
-  // Verify batch exists
-  const batch = await c.env.DB.prepare('SELECT id FROM lead_batches WHERE id = ?').bind(id).first();
-  if (!batch) {
-    return c.json({ error: 'Batch not found' }, 404);
-  }
-
-  // Atomically delete leads then the batch
-  await c.env.DB.batch([
-    c.env.DB.prepare('DELETE FROM leads WHERE batch_id = ?').bind(id),
-    c.env.DB.prepare('DELETE FROM lead_batches WHERE id = ?').bind(id)
-  ]);
-
-  // Optionally we could return how many leads were deleted if we counted them, 
-  return c.json({ deleted_batch_id: id });
-});
-
-admin.get('/leads', async (c) => {
-  const batchId = c.req.query('batch_id');
-  let query = `
+  const { results } = await c.env.DB.prepare(`
     SELECT 
-      l.id, l.phone_number, l.first_name, l.last_name, l.status,
-      l.assigned_user_id, u.username as assigned_agent_username,
-      l.batch_id, lb.file_name as batch_name
-    FROM leads l
-    LEFT JOIN users u ON l.assigned_user_id = u.id
-    LEFT JOIN lead_batches lb ON l.batch_id = lb.id
-  `;
-  const params: any[] = [];
-  if (batchId) {
-    query += ` WHERE l.batch_id = ?`;
-    params.push(batchId);
-  }
-  query += ` ORDER BY l.id DESC LIMIT 2000`; // Limit to prevent massive payloads
+      pi.phone_number,
+      pi.friendly_name,
+      pi.status,
+      pi.assigned_agent_id as assigned_to_user_id,
+      u.username as assigned_agent_username
+    FROM phone_inventory pi
+    LEFT JOIN users u ON pi.assigned_agent_id = u.id
+    WHERE pi.assigned_tenant_id = ?
+    ORDER BY pi.created_at DESC
+  `).bind(tenantId).all();
 
-  const { results } = await c.env.DB.prepare(query).bind(...params).all();
-  return c.json({ data: results });
-});
-
-const assignLeadSchema = z.object({
-  lead_id: z.string().min(1),
-  user_id: z.string().nullable(),
-});
-
-admin.patch('/leads/assign', zValidator('json', assignLeadSchema), async (c) => {
-  const { lead_id, user_id } = c.req.valid('json');
-  await c.env.DB.prepare('UPDATE leads SET assigned_user_id = ? WHERE id = ?').bind(user_id, lead_id).run();
-  return c.json({ success: true });
-});
-
-const assignBulkSchema = z.object({
-  lead_ids: z.array(z.string()).min(1),
-  user_id: z.string().nullable(),
-});
-
-admin.patch('/leads/assign-bulk', zValidator('json', assignBulkSchema), async (c) => {
-  const { lead_ids, user_id } = c.req.valid('json');
-  
-  const stmt = c.env.DB.prepare('UPDATE leads SET assigned_user_id = ? WHERE id = ?');
-  const stmts = lead_ids.map((id: string) => stmt.bind(user_id, id));
-  
-  const CHUNK_SIZE = 100;
-  for (let i = 0; i < stmts.length; i += CHUNK_SIZE) {
-    await c.env.DB.batch(stmts.slice(i, i + CHUNK_SIZE));
-  }
-  return c.json({ success: true, count: lead_ids.length });
-});
-
-const distributeSchema = z.object({
-  lead_ids: z.array(z.string()).min(1),
-  user_ids: z.array(z.string()).min(1),
-});
-
-admin.patch('/leads/distribute-randomly', zValidator('json', distributeSchema), async (c) => {
-  const { lead_ids, user_ids } = c.req.valid('json');
-  
-  const stmts = lead_ids.map((id: string) => {
-    const randomUser = user_ids[Math.floor(Math.random() * user_ids.length)];
-    return c.env.DB.prepare('UPDATE leads SET assigned_user_id = ? WHERE id = ?').bind(randomUser, id);
-  });
-  
-  const CHUNK_SIZE = 100;
-  for (let i = 0; i < stmts.length; i += CHUNK_SIZE) {
-    await c.env.DB.batch(stmts.slice(i, i + CHUNK_SIZE));
-  }
-  return c.json({ success: true, count: lead_ids.length });
-});
-
-admin.delete('/leads/:id', async (c) => {
-  const id = c.req.param('id');
-
-  // Atomically delete lead
-  const result = await c.env.DB.prepare('DELETE FROM leads WHERE id = ?').bind(id).run();
-
-  if (result.meta.changes === 0) {
-    return c.json({ error: 'Lead not found' }, 404);
-  }
-
-  return c.json({ deleted_lead_id: id });
-});
-
-// GET /numbers
-admin.get('/numbers', async (c) => {
-  // Auto-Initialization Safeguard
-  await c.env.DB.batch([
-    c.env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS phone_numbers (
-        id TEXT PRIMARY KEY,
-        phone_number TEXT UNIQUE NOT NULL,
-        friendly_name TEXT,
-        assigned_to_user_id TEXT,
-        status TEXT DEFAULT 'active',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `),
-    c.env.DB.prepare(`
-      INSERT OR IGNORE INTO phone_numbers (id, phone_number, friendly_name, status)
-      VALUES ('num_default_01', '+19564461280', 'Main Outbound Line', 'active')
-    `)
-  ]);
-
-  const { results } = await c.env.DB.prepare(
-    `SELECT p.id, p.phone_number, p.friendly_name, p.status, p.assigned_to_user_id, u.username as assigned_agent_username
-     FROM phone_numbers p
-     LEFT JOIN users u ON p.assigned_to_user_id = u.id
-     ORDER BY p.created_at DESC`
-  ).all();
-
-  return c.json({ data: results });
+  return c.json({ data: results || [] });
 });
 
 const assignNumberSchema = z.object({
-  phone_id: z.string().min(1),
-  user_id: z.string().nullable(), // null to unassign
+  phone_id: z.string().min(1), // can be phone_number or ID
+  user_id: z.string().nullable(), // agent id
 });
 
-// POST /numbers/assign
 admin.post('/numbers/assign', zValidator('json', assignNumberSchema), async (c) => {
   const { phone_id, user_id } = c.req.valid('json');
+  const tenantId = await getEffectiveTenantId(c);
 
-  const phone = await c.env.DB.prepare('SELECT phone_number FROM phone_numbers WHERE id = ?')
-    .bind(phone_id)
-    .first<{ phone_number: string }>();
+  // Verify number belongs to this tenant
+  const phone = await c.env.DB.prepare(`
+    SELECT phone_number FROM phone_inventory 
+    WHERE (phone_number = ? OR telnyx_id = ?) AND assigned_tenant_id = ?
+  `).bind(phone_id, phone_id, tenantId).first<{ phone_number: string }>();
 
   if (!phone) {
-    return c.json({ error: 'Phone number not found' }, 404);
-  }
-
-  // Self-Healing Schema Guard
-  try {
-    await c.env.DB.prepare("ALTER TABLE users ADD COLUMN assigned_phone_number TEXT;").run();
-  } catch (e) {
-    // Column already exists, ignore error
+    return c.json({ error: 'Phone number not assigned to your organization' }, 404);
   }
 
   if (user_id) {
-    // Assign to new user
+    // Verify user belongs to tenant
+    const agent = await c.env.DB.prepare('SELECT id FROM users WHERE id = ? AND tenant_id = ?')
+      .bind(user_id, tenantId).first();
+    if (!agent) {
+      return c.json({ error: 'Agent not found in your organization' }, 404);
+    }
+
     await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE phone_numbers SET assigned_to_user_id = ? WHERE phone_number = ? OR id = ?").bind(user_id, phone.phone_number, phone_id),
-      c.env.DB.prepare("UPDATE users SET assigned_phone_number = ? WHERE id = ? OR username = ?").bind(phone.phone_number, user_id, user_id)
+      c.env.DB.prepare('UPDATE phone_inventory SET assigned_agent_id = ? WHERE phone_number = ?')
+        .bind(user_id, phone.phone_number),
+      c.env.DB.prepare('UPDATE users SET assigned_phone_number = ? WHERE id = ?')
+        .bind(phone.phone_number, user_id),
     ]);
   } else {
     // Unassign
     await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE phone_numbers SET assigned_to_user_id = NULL WHERE phone_number = ? OR id = ?").bind(phone.phone_number, phone_id),
-      c.env.DB.prepare("UPDATE users SET assigned_phone_number = NULL WHERE assigned_phone_number = ?").bind(phone.phone_number)
+      c.env.DB.prepare('UPDATE phone_inventory SET assigned_agent_id = NULL WHERE phone_number = ?')
+        .bind(phone.phone_number),
+      c.env.DB.prepare('UPDATE users SET assigned_phone_number = NULL WHERE assigned_phone_number = ?')
+        .bind(phone.phone_number),
     ]);
   }
 
-  return c.json({ success: true });
+  return c.json({ success: true, phone_number: phone.phone_number, assigned_to: user_id });
 });
 
+// ----------------------------------------------------------------
+// Agent Status & Work Summary (Scoped to Tenant)
+// ----------------------------------------------------------------
 admin.get('/agent-status', async (c) => {
-  // No role filter — include admins who actively use the dialer
+  const tenantId = await getEffectiveTenantId(c);
+
   const { results } = await c.env.DB.prepare(`
     SELECT
       u.id        AS user_id,
@@ -477,17 +391,18 @@ admin.get('/agent-status', async (c) => {
       a.changed_at
     FROM users u
     LEFT JOIN agent_status a ON u.id = a.user_id
-    WHERE u.role = 'agent'
+    WHERE u.role = 'agent' AND u.tenant_id = ? AND COALESCE(u.status, 'offline') != 'deleted'
     ORDER BY u.created_at DESC
-  `).all();
+  `).bind(tenantId).all();
 
-  return c.json({ data: results });
+  return c.json({ data: results || [] });
 });
 
 admin.get('/agents/work-summary', async (c) => {
-  // No role filter — include admins who actively use the dialer
-  const { results } = await c.env.DB.prepare(
-    `SELECT
+  const tenantId = await getEffectiveTenantId(c);
+
+  const { results } = await c.env.DB.prepare(`
+    SELECT
        u.id                                                          AS agent_id,
        u.username,
        u.role,
@@ -512,20 +427,24 @@ admin.get('/agents/work-summary', async (c) => {
        ) WHERE rn = 1
      ) cl ON u.id = cl.agent_id
      LEFT JOIN leads l ON cl.lead_id = l.id
-     WHERE u.role = 'agent' AND COALESCE(u.status, 'offline') != 'deleted'
-     ORDER BY u.created_at DESC`
-  ).all();
+     WHERE u.role = 'agent' AND u.tenant_id = ? AND COALESCE(u.status, 'offline') != 'deleted'
+     ORDER BY u.created_at DESC
+  `).bind(tenantId).all();
 
-  return c.json({ data: results });
+  return c.json({ data: results || [] });
 });
 
+// ----------------------------------------------------------------
+// Call Recordings (Scoped to Tenant)
+// ----------------------------------------------------------------
 admin.get('/call-recordings', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
   const agentId = c.req.query('agent_id');
-  const date = c.req.query('date'); // e.g. "2025-08-31"
+  const date = c.req.query('date');
   const appBaseUrl = c.env.APP_BASE_URL || '';
 
-  const conditions: string[] = [];
-  const params: any[] = [];
+  const conditions: string[] = ['u.tenant_id = ?'];
+  const params: any[] = [tenantId];
 
   if (agentId) {
     conditions.push('cr.agent_id = ?');
@@ -552,14 +471,13 @@ admin.get('/call-recordings', async (c) => {
       cr.recording_url,
       cr.created_at
     FROM call_recordings cr
-    LEFT JOIN users u ON cr.agent_id = u.id
+    JOIN users u ON cr.agent_id = u.id
     ${where}
     ORDER BY cr.created_at DESC 
     LIMIT 200
   `).bind(...params).all();
 
-  // Build proxy URL for each recording that has an r2_key
-  const data = results.map((r: any) => ({
+  const data = (results || []).map((r: any) => ({
     ...r,
     playback_url: r.r2_key
       ? `${appBaseUrl}/api/recordings/${encodeURIComponent(r.r2_key)}`

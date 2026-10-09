@@ -4,6 +4,9 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import type { AppEnv } from '../types';
 import { authMiddleware } from '../auth/middleware';
+import { normalizeToE164, isValidE164 } from '../utils/phone';
+import { computeCallDuration, calculateElapsedSeconds } from '../utils/duration';
+import { verifyPreCallCredits, deductCallCredits } from '../services/creditEngine';
 
 const calls = new Hono<AppEnv>();
 
@@ -12,30 +15,45 @@ calls.use('*', authMiddleware);
 // ── GET /calls — list call logs with optional filters ────────────────
 calls.get('/', async (c) => {
   const { agent_id, campaign_id, telnyx_call_control_id, status, page = '1', limit = '50' } = c.req.query();
-  
+  const userId = c.get('userId');
+  const role = c.get('role');
+  let tenantId = c.get('tenantId');
+
+  if (!tenantId && role !== 'super_admin') {
+    const user = await c.env.DB.prepare('SELECT tenant_id FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ tenant_id: string | null }>();
+    tenantId = user?.tenant_id || undefined;
+  }
+
   const conditions: string[] = [];
   const params: any[] = [];
-  
-  if (agent_id) { conditions.push('agent_id = ?'); params.push(agent_id); }
-  if (campaign_id) { conditions.push('campaign_id = ?'); params.push(campaign_id); }
+
+  if (tenantId && role !== 'super_admin') {
+    conditions.push('cl.tenant_id = ?');
+    params.push(tenantId);
+  }
+
+  if (agent_id) { conditions.push('cl.agent_id = ?'); params.push(agent_id); }
+  if (campaign_id) { conditions.push('cl.campaign_id = ?'); params.push(campaign_id); }
   if (telnyx_call_control_id) {
-    conditions.push('(telnyx_call_control_id = ? OR agent_leg_call_control_id = ?)');
+    conditions.push('(cl.telnyx_call_control_id = ? OR cl.agent_leg_call_control_id = ?)');
     params.push(telnyx_call_control_id, telnyx_call_control_id);
   }
-  if (status) { conditions.push('status = ?'); params.push(status); }
-  
+  if (status) { conditions.push('cl.status = ?'); params.push(status); }
+
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const limitNum = Math.min(parseInt(limit, 10) || 50, 200);
   const offset = (Math.max(parseInt(page, 10) || 1, 1) - 1) * limitNum;
-  
+
   const rows = await c.env.DB.prepare(
-    `SELECT * FROM call_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`
+    `SELECT cl.* FROM call_logs cl ${where} ORDER BY cl.created_at DESC LIMIT ? OFFSET ?`
   ).bind(...params, limitNum, offset).all();
-  
+
   const total = await c.env.DB.prepare(
-    `SELECT COUNT(*) as cnt FROM call_logs ${where}`
+    `SELECT COUNT(*) as cnt FROM call_logs cl ${where}`
   ).bind(...params).first<{ cnt: number }>();
-  
+
   return c.json({
     data: rows.results,
     total: total?.cnt ?? 0,
@@ -57,14 +75,29 @@ const outboundCallSchema = z.object({
 });
 
 calls.post('/outbound', zValidator('json', outboundCallSchema), async (c) => {
-
   const { to } = c.req.valid('json');
   const userId = c.get('userId');
 
-  // 1. Get the assigned number for this user
-  const user = await c.env.DB.prepare('SELECT assigned_phone_number FROM users WHERE id = ?')
+  const normalizedTo = normalizeToE164(to);
+  if (!isValidE164(normalizedTo)) {
+    return c.json({ error: `Invalid number: ${to}. Must be valid phone format.` }, 400);
+  }
+
+  // 1. Get the assigned number and tenant for this user
+  const user = await c.env.DB.prepare('SELECT assigned_phone_number, tenant_id FROM users WHERE id = ?')
     .bind(userId)
-    .first<{ assigned_phone_number: string }>();
+    .first<{ assigned_phone_number: string; tenant_id: string }>();
+
+  const tenantId = user?.tenant_id || c.get('tenantId');
+
+  // Pre-flight Credit Verification
+  if (tenantId) {
+    try {
+      await verifyPreCallCredits(c.env.DB, tenantId);
+    } catch (creditErr: any) {
+      return c.json({ error: creditErr.message }, 402);
+    }
+  }
 
   const callerId = user?.assigned_phone_number || c.env.TELNYX_DEFAULT_NUMBER || '+19564461280';
   const connectionId = c.env.TELNYX_CONNECTION_ID;
@@ -83,9 +116,8 @@ calls.post('/outbound', zValidator('json', outboundCallSchema), async (c) => {
       },
       body: JSON.stringify({
         connection_id: connectionId,
-        to,
+        to: normalizedTo,
         from: callerId,
-        // The webhook URL that Telnyx will hit for call events
         webhook_url: `${c.env.APP_BASE_URL}/api/webhooks/telnyx`,
       }),
     });
@@ -105,115 +137,103 @@ calls.post('/outbound', zValidator('json', outboundCallSchema), async (c) => {
 });
 
 const manualCallSchema = z.object({
-  agentId: z.string().uuid(),
+  agentId: z.string(),
   phoneNumber: z.string().min(1),
-  leadId: z.string().uuid().optional(),
-  campaignId: z.string().uuid().optional(),
+  leadId: z.string().optional(),
+  campaignId: z.string().optional(),
   telnyx_call_control_id: z.string().optional(),
   direction: z.enum(['outbound', 'inbound']).optional(),
 });
 
 calls.post('/manual', zValidator('json', manualCallSchema), async (c) => {
   const body = c.req.valid('json');
-  
+
+  const normalizedPhone = normalizeToE164(body.phoneNumber);
+  if (!isValidE164(normalizedPhone)) {
+    return c.json({ error: `Invalid number: ${body.phoneNumber}. Must be valid phone format.` }, 400);
+  }
+
+  // Check agent & tenant credentials
+  const user = await c.env.DB.prepare('SELECT id, username, tenant_id, assigned_phone_number FROM users WHERE id = ?')
+    .bind(body.agentId)
+    .first<{ id: string; username: string; tenant_id: string | null; assigned_phone_number: string | null }>();
+
+  const tenantId = user?.tenant_id || c.get('tenantId');
+
+  // Pre-flight Credit Verification
+  if (tenantId) {
+    try {
+      await verifyPreCallCredits(c.env.DB, tenantId);
+    } catch (creditErr: any) {
+      return c.json({ error: creditErr.message }, 402);
+    }
+  }
+
   const id = crypto.randomUUID();
   const now = new Date().toISOString();
   const direction = body.direction || 'outbound';
-  
-  // Ensure the agent exists in the agents table (call_logs.agent_id references agents.id).
-  // The system uses two tables: users (auth) and agents (dialer). We auto-sync them here.
+
+  // Ensure agent operational record
   try {
-    const user = await c.env.DB.prepare('SELECT username FROM users WHERE id = ?').bind(body.agentId).first<{ username: string }>();
     if (user) {
       await c.env.DB.prepare(`
-        INSERT INTO agents (id, name, email) 
-        VALUES (?, ?, ?) 
-        ON CONFLICT(id) DO NOTHING
-      `).bind(body.agentId, user.username, `${user.username}@system.local`).run();
-    } else {
-      console.warn(`[calls/manual] Agent ${body.agentId} not found in users table — call_log FK may fail.`);
+        INSERT INTO agents (id, name, email, tenant_id) 
+        VALUES (?, ?, ?, ?) 
+        ON CONFLICT(id) DO UPDATE SET tenant_id = excluded.tenant_id
+      `).bind(body.agentId, user.username, `${user.username}@system.local`, tenantId || null).run();
     }
   } catch (syncErr: any) {
-    // Log but don't abort — the call log insert below has a FK fallback.
     console.error(`[calls/manual] Agent sync to agents table failed: ${syncErr?.message}`);
   }
-  
+
   if (body.leadId) {
     const lead = await c.env.DB.prepare('SELECT id FROM leads WHERE id = ?').bind(body.leadId).first();
     if (!lead) {
-      console.warn(`[calls/manual] leadId ${body.leadId} not found — omitting from call_log.`);
       body.leadId = undefined;
     }
   }
 
-  try {
-    // Write both start_time (legacy column added in migration 0005) AND started_at
-    // (original schema column). The frontend CallTimer reads started_at for the
-    // elapsed call duration display.
-    await c.env.DB.prepare(`
-      INSERT INTO call_logs (id, agent_id, lead_id, campaign_id, telnyx_call_control_id, direction, status, started_at, start_time, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'ringing', ?, ?, ?)
-    `)
-    .bind(
-      id,
-      body.agentId,
-      body.leadId || null,
-      body.campaignId || null,
-      body.telnyx_call_control_id || null,
-      direction,
-      now, // started_at — read by frontend CallTimer
-      now, // start_time — legacy column
-      now  // created_at
-    ).run();
-  } catch (error: any) {
-    if (error.message && error.message.includes('FOREIGN KEY constraint failed')) {
-      // agent_id FK failed — insert without agent_id as a last resort
-      console.error(`[calls/manual] FK constraint on agent_id=${body.agentId}. Inserting call_log without agent reference.`);
-      await c.env.DB.prepare(`
-        INSERT INTO call_logs (id, agent_id, lead_id, campaign_id, telnyx_call_control_id, direction, status, started_at, start_time, created_at)
-        VALUES (?, NULL, NULL, NULL, ?, ?, 'ringing', ?, ?, ?)
-      `)
-      .bind(
-        id,
-        body.telnyx_call_control_id || null,
-        direction,
-        now, // started_at
-        now, // start_time
-        now  // created_at
-      ).run();
-    } else {
-      throw error;
-    }
-  }
-  
+  // Insert call log with normalized phone and tenant_id
+  await c.env.DB.prepare(`
+    INSERT INTO call_logs (
+      id, tenant_id, agent_id, lead_id, campaign_id, 
+      telnyx_call_control_id, direction, status, 
+      started_at, start_time, duration_seconds, duration, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'ringing', ?, ?, 0, 0, ?)
+  `).bind(
+    id,
+    tenantId || null,
+    body.agentId,
+    body.leadId || null,
+    body.campaignId || null,
+    body.telnyx_call_control_id || null,
+    direction,
+    now,
+    now,
+    now
+  ).run();
+
   const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
 
-  // Update sticky routing map: record that this agent called this number
-  // from their assigned number, so inbound callbacks route back to them
+  // Outbound sticky routing map
   if (direction === 'outbound') {
     try {
-      const agentUser = await c.env.DB.prepare('SELECT assigned_phone_number FROM users WHERE id = ?')
-        .bind(body.agentId)
-        .first<{ assigned_phone_number: string | null }>();
-      const fromNumber = agentUser?.assigned_phone_number;
-      if (fromNumber && body.phoneNumber) {
+      const fromNumber = user?.assigned_phone_number;
+      if (fromNumber && normalizedPhone) {
         await c.env.DB.prepare(`
           INSERT INTO outbound_call_map (id, agent_id, from_number, to_number, last_call_at)
           VALUES (?, ?, ?, ?, datetime('now'))
           ON CONFLICT(from_number, to_number) DO UPDATE SET
             agent_id = excluded.agent_id,
             last_call_at = excluded.last_call_at
-        `).bind(crypto.randomUUID(), body.agentId, fromNumber, body.phoneNumber).run();
+        `).bind(crypto.randomUUID(), body.agentId, fromNumber, normalizedPhone).run();
       }
-    } catch (mapErr: any) {
-      console.warn('[calls/manual] outbound_call_map upsert failed (non-fatal):', mapErr?.message);
-    }
+    } catch {}
   }
 
-  return c.json({ data: callLog });
+  return c.json({ data: callLog }, 201);
 });
-
-
 
 const updateCallSchema = z.object({
   status: z.string().optional(),
@@ -227,32 +247,46 @@ const updateCallSchema = z.object({
 calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
   const id = c.req.param('id');
   const body = c.req.valid('json');
-  
+
   const updates: string[] = [];
   const values: any[] = [];
-  
+
+  const existingLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first<any>();
+  if (!existingLog) {
+    return c.json({ error: 'Call log not found' }, 404);
+  }
+
+  const callStatus = body.status || existingLog.status || '';
+  const nonConnected = ['failed', 'declined', 'busy', 'no_answer', 'invalid number', 'ringing', 'initiated'];
+  const isNonConnected = nonConnected.includes(callStatus.toLowerCase());
+
   if (body.status) {
     updates.push('status = ?');
     values.push(body.status);
   }
+
+  // Duration Safeguards & Normalization
+  let resolvedDurationSeconds = 0;
+
+  if (isNonConnected) {
+    // Failed, ringing, declined, or unallocated calls MUST have 0 duration
+    resolvedDurationSeconds = 0;
+  } else if (body.duration !== undefined) {
+    resolvedDurationSeconds = Math.max(0, Math.min(86400, Math.floor(body.duration)));
+  } else if (body.end_time || existingLog.started_at || existingLog.start_time) {
+    const startStr = existingLog.started_at || existingLog.start_time;
+    const endStr = body.end_time || new Date().toISOString();
+    resolvedDurationSeconds = calculateElapsedSeconds(callStatus, startStr, endStr);
+  }
+
   if (body.end_time) {
-    updates.push('end_time = ?');
-    values.push(body.end_time);
-    
-    // Automatically calculate duration if not provided
-    if (body.duration === undefined) {
-      const log = await c.env.DB.prepare('SELECT start_time FROM call_logs WHERE id = ?').bind(id).first<{ start_time: string }>();
-      if (log?.start_time) {
-        const start = new Date(log.start_time).getTime();
-        const end = new Date(body.end_time).getTime();
-        body.duration = Math.floor((end - start) / 1000);
-      }
-    }
+    updates.push('end_time = ?', 'ended_at = ?');
+    values.push(body.end_time, body.end_time);
   }
-  if (body.duration !== undefined) {
-    updates.push('duration_seconds = ?'); // Mapped duration to duration_seconds to match DB schema
-    values.push(body.duration);
-  }
+
+  updates.push('duration_seconds = ?', 'duration = ?');
+  values.push(resolvedDurationSeconds, resolvedDurationSeconds);
+
   if (body.hangup_cause) {
     updates.push('hangup_cause = ?');
     values.push(body.hangup_cause);
@@ -265,60 +299,75 @@ calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
     updates.push('failure_category = ?');
     values.push(body.failure_category);
   }
-  
+
   if (updates.length > 0) {
     values.push(id);
     await c.env.DB.prepare(`UPDATE call_logs SET ${updates.join(', ')} WHERE id = ?`)
       .bind(...values)
       .run();
   }
-  
-  const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
-  return c.json({ data: callLog });
+
+  // Deduct call credits if call completed with positive duration
+  if (body.status === 'completed' && resolvedDurationSeconds > 0 && existingLog.tenant_id) {
+    try {
+      await deductCallCredits(c.env.DB, {
+        tenantId: existingLog.tenant_id,
+        callId: id,
+        durationSeconds: resolvedDurationSeconds,
+      });
+    } catch (e: any) {
+      console.error('[calls.patch] Credit deduction error:', e.message);
+    }
+  }
+
+  const updatedLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first();
+  return c.json({ data: updatedLog });
 });
 
 const dispositionSchema = z.object({
-  disposition: z.string(),
+  disposition: z.enum(['sale', 'callback', 'not_interested', 'wrong_number', 'voicemail', 'no_answer', 'dnc_request']),
   notes: z.string().optional(),
+  callback_time: z.string().optional(),
+  callback_notes: z.string().optional(),
 });
 
 calls.post('/:id/disposition', zValidator('json', dispositionSchema), async (c) => {
   const id = c.req.param('id');
-  const { disposition, notes } = c.req.valid('json');
-  
-  const callLog = await c.env.DB.prepare('SELECT lead_id, agent_id FROM call_logs WHERE id = ?').bind(id).first<{ lead_id: string | null, agent_id: string | null }>();
-  if (!callLog) return c.json({ error: 'Call not found' }, 404);
+  const body = c.req.valid('json');
 
-  await c.env.DB.prepare('UPDATE call_logs SET disposition = ?, disposition_notes = ? WHERE id = ?')
-    .bind(disposition, notes || null, id)
-    .run();
-    
-  if (callLog.lead_id) {
-     let leadStatus = 'completed';
-     if (disposition === 'dnc_request') leadStatus = 'dnc';
-     else if (disposition === 'callback') leadStatus = 'pending';
-     else if (disposition === 'wrong_number' || disposition === 'no_answer' || disposition === 'voicemail') leadStatus = 'failed';
-     
-     await c.env.DB.prepare('UPDATE leads SET status = ?, updated_at = datetime("now") WHERE id = ?')
-       .bind(leadStatus, callLog.lead_id)
-       .run();
-  }
-  
-  if (callLog.agent_id) {
-     const result = await c.env.DB.prepare(`
-       UPDATE agent_status SET status = 'available', changed_at = datetime('now')
-       WHERE user_id = ? AND status = 'wrap_up'
-     `).bind(callLog.agent_id).run();
-     
-     if (result.meta.changes > 0) {
-        c.executionCtx.waitUntil((async () => {
-           await new Promise(resolve => setTimeout(resolve, 3000));
-           await tryDialNextLead(c.env, callLog.agent_id!);
-        })());
-     }
+  const callLog = await c.env.DB.prepare('SELECT * FROM call_logs WHERE id = ?').bind(id).first<any>();
+  if (!callLog) {
+    return c.json({ error: 'Call log not found' }, 404);
   }
 
-  return c.json({ success: true });
+  await c.env.DB.prepare(`
+    UPDATE call_logs 
+    SET disposition = ?, disposition_notes = ?
+    WHERE id = ?
+  `).bind(body.disposition, body.notes || null, id).run();
+
+  // If callback disposition, automatically queue in callbacks table
+  if (body.disposition === 'callback' && body.callback_time) {
+    const callbackId = crypto.randomUUID();
+    const contactPhone = callLog.destination_number || callLog.to || '';
+    if (callLog.tenant_id && contactPhone) {
+      await c.env.DB.prepare(`
+        INSERT INTO callbacks (id, tenant_id, lead_id, phone_number, contact_name, scheduled_time, assigned_agent_id, status, notes, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, datetime('now'))
+      `).bind(
+        callbackId,
+        callLog.tenant_id,
+        callLog.lead_id || null,
+        contactPhone,
+        null,
+        body.callback_time,
+        callLog.agent_id || null,
+        body.callback_notes || body.notes || 'Callback requested via disposition'
+      ).run();
+    }
+  }
+
+  return c.json({ success: true, disposition: body.disposition });
 });
 
 export default calls;

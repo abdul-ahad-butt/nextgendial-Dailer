@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import type { AppEnv } from '../types';
 import { authMiddleware } from '../auth/middleware';
+import { verifyPreCallCredits } from '../services/creditEngine';
 
 const agents = new Hono<AppEnv>();
 
@@ -76,13 +77,26 @@ agents.patch('/:id/status', zValidator('json', z.object({ status: z.string() }))
 
 agents.post('/:id/webrtc-token', async (c) => {
   const id = c.req.param('id');
-  const user = await c.env.DB.prepare('SELECT id, username, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?')
+  const user = await c.env.DB.prepare('SELECT id, username, tenant_id, telnyx_credential_id, telnyx_sip_username FROM users WHERE id = ?')
     .bind(id)
-    .first<{ id: string, username: string, telnyx_credential_id: string, telnyx_sip_username: string }>();
+    .first<{ id: string, username: string, tenant_id: string | null, telnyx_credential_id: string, telnyx_sip_username: string }>();
     
   if (!user) {
     return c.json({ error: 'Agent not found' }, 404);
   }
+
+  // Pre-flight Credit Check for Agent's Organization
+  if (user.tenant_id) {
+    try {
+      await verifyPreCallCredits(c.env.DB, user.tenant_id);
+    } catch (creditErr: any) {
+      return c.json({
+        error: 'INSUFFICIENT_CREDITS',
+        message: creditErr.message || 'INSUFFICIENT_CREDITS: Please contact Super Admin to refill calling credits.',
+      }, 402);
+    }
+  }
+
 
   let credentialId = user.telnyx_credential_id;
 

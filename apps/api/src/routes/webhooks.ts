@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { handleTelnyxWebhook } from '../dialer/engine';
+import { normalizeToE164 } from '../utils/phone';
 
 const webhooks = new Hono<AppEnv>();
 
@@ -22,6 +23,9 @@ webhooks.post('/telnyx', async (c) => {
     if (eventType === 'call.recording.saved') {
       // Handle recording saved — download from Telnyx, upload to R2
       c.executionCtx.waitUntil(handleRecordingSaved(c.env, payload.data.payload));
+    } else if (eventType === 'message.received') {
+      // Inbound SMS/MMS reception
+      c.executionCtx.waitUntil(handleInboundMessage(c.env, payload.data.payload));
     } else {
       c.executionCtx.waitUntil(handleTelnyxWebhook(c.env, payload.data));
     }
@@ -32,6 +36,51 @@ webhooks.post('/telnyx', async (c) => {
     return c.json({ error: 'Failed to process webhook' }, 500);
   }
 });
+
+async function handleInboundMessage(
+  env: AppEnv['Bindings'],
+  payload: any
+): Promise<void> {
+  try {
+    const fromRaw = payload.from?.phone_number || payload.from || '';
+    const toRaw = Array.isArray(payload.to)
+      ? payload.to[0]?.phone_number || payload.to[0] || ''
+      : payload.to?.phone_number || payload.to || '';
+    
+    const fromNumber = normalizeToE164(fromRaw);
+    const toNumber = normalizeToE164(toRaw);
+    const bodyText = payload.text || payload.body || '';
+
+    if (!fromNumber || !toNumber) {
+      console.warn('[webhook] Inbound SMS missing from or to number:', payload);
+      return;
+    }
+
+    // Lookup tenant and agent assigned to destination number in phone_inventory
+    const inv = await env.DB.prepare(
+      'SELECT assigned_tenant_id, assigned_agent_id FROM phone_inventory WHERE phone_number = ?'
+    ).bind(toNumber).first<{ assigned_tenant_id: string | null; assigned_agent_id: string | null }>();
+
+    let tenantId = inv?.assigned_tenant_id;
+    let agentId = inv?.assigned_agent_id;
+
+    if (!tenantId) {
+      const def = await env.DB.prepare('SELECT id FROM tenants LIMIT 1').first<{ id: string }>();
+      tenantId = def?.id || 'default_tenant';
+    }
+
+    const messageId = payload.id || crypto.randomUUID();
+
+    await env.DB.prepare(`
+      INSERT INTO messages (id, tenant_id, from_number, to_number, direction, body, status, agent_id, created_at)
+      VALUES (?, ?, ?, ?, 'inbound', ?, 'received', ?, datetime('now'))
+    `).bind(messageId, tenantId, fromNumber, toNumber, bodyText, agentId || null).run();
+
+    console.log(`[webhook] Inbound SMS stored successfully: ${messageId} (from: ${fromNumber}, to: ${toNumber}, tenant: ${tenantId})`);
+  } catch (err: any) {
+    console.error('[webhook] handleInboundMessage error:', err?.message);
+  }
+}
 
 async function handleRecordingSaved(
   env: AppEnv['Bindings'],
@@ -50,8 +99,8 @@ async function handleRecordingSaved(
 
     // Lookup associated call log
     const callLog = await env.DB.prepare(
-      'SELECT id, agent_id, lead_id, direction FROM call_logs WHERE telnyx_call_control_id = ? OR agent_leg_call_control_id = ?'
-    ).bind(callControlId, callControlId).first<{ id: string; agent_id: string; lead_id: string; direction: string }>();
+      'SELECT id, agent_id, lead_id, direction, tenant_id FROM call_logs WHERE telnyx_call_control_id = ? OR agent_leg_call_control_id = ?'
+    ).bind(callControlId, callControlId).first<{ id: string; agent_id: string; lead_id: string; direction: string; tenant_id: string }>();
 
     let agentUsername = '';
     let destNumber = '';
@@ -102,8 +151,6 @@ async function handleRecordingSaved(
       } catch (r2Err: any) {
         console.error('[recording] R2 upload error:', r2Err?.message);
       }
-    } else if (!env.RECORDINGS) {
-      console.warn('[recording] RECORDINGS R2 binding not configured — skipping R2 upload. Falling back to Telnyx URL.');
     }
 
     // Store recording metadata in D1
@@ -119,11 +166,10 @@ async function handleRecordingSaved(
       destNumber,
       direction,
       durationSeconds,
-      audioBuffer ? null : recordingUrl, // only use Telnyx URL as fallback
+      audioBuffer ? null : recordingUrl,
       audioBuffer ? r2Key : null,
     ).run();
 
-    // Also update call_logs.recording_url for quick access
     if (callLogId) {
       await env.DB.prepare('UPDATE call_logs SET recording_url = ? WHERE id = ?')
         .bind(audioBuffer ? r2Key : recordingUrl, callLogId)
