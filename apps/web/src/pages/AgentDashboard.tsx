@@ -1,15 +1,17 @@
 /**
  * apps/web/src/pages/AgentDashboard.tsx
  *
- * Modernized Agent Workspace with:
- *  - Tactile Keypad with audio waveform & DTMF tones
- *  - Real-time Tenant Credit Balance safeguard indicator
- *  - Scheduled Callbacks Drawer with due reminders
- *  - Two-Way SMS Inbox for direct lead engagement
- *  - Floating row cards and glassmorphic aesthetics
+ * Modernized Agent Telephony Workspace with:
+ *  - 3D Telephony Audio Orb / Particle Wave Visualizer
+ *  - Responsive 12-column Grid with Glassmorphic Panels
+ *  - Tactile Keypad with DTMF and Audio Waveforms
+ *  - Real-time Prepaid Tenant Credit Safeguard
+ *  - Scheduled Callbacks & Two-Way SMS Drawers
+ *  - Glassmorphic Call History & Diagnostics Table
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { PhoneCall, MessageSquare, RefreshCw, LogOut, Zap, ShieldAlert } from 'lucide-react';
 import type { Agent, Campaign, Lead } from '../types';
 import { useAgentStatus } from '../hooks/useAgentStatus';
 import { useTelnyxClient } from '../hooks/useTelnyxClient';
@@ -20,6 +22,7 @@ import { Keypad } from '../components/dialer/Keypad';
 import { CallbackDrawer } from '../components/dialer/CallbackDrawer';
 import { SMSInbox } from '../components/messaging/SMSInbox';
 import { DispositionModal } from '../components/DispositionModal';
+import { TelephonyVisualizer3D } from '../components/3d/TelephonyVisualizer3D';
 import { api } from '../lib/api';
 import { getAudioMuted, setAudioMuted, initAudioContext } from '../lib/audio';
 import { formatCurrency, formatE164 } from '../utils/formatters';
@@ -81,7 +84,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
     try {
       const creds = await api.agent.getCredits();
       setCreditBalance(creds);
-    } catch (err) {
+    } catch {
       // ignore
     }
   };
@@ -149,56 +152,53 @@ export function AgentDashboard({ agent, onLogout }: Props) {
         else if (friendly === 'NO_ANSWER') friendly = 'No Answer';
         else if (friendly === 'NORMAL_CLEARING') friendly = 'Call Ended';
       }
-
-      setToastType(lastFailedCall.isConfigIssue ? 'warning' : 'error');
-      setToastMessage(`Call failed: ${friendly}`);
+      setToastType('error');
+      setToastMessage(`Call failed: ${friendly || 'Connection lost'}`);
       const t = setTimeout(() => setToastMessage(null), 5000);
       return () => clearTimeout(t);
     }
   }, [lastFailedCall, dialingLeadId]);
 
-  const currentScript =
-    callContext?.campaign_id
-      ? (campaigns.find((c) => c.id === callContext.campaign_id)?.script ?? null)
-      : null;
+  // Update lead status when activeCall changes
+  useEffect(() => {
+    if (activeCall && dialingLeadId) {
+      api.leads.updateStatus(dialingLeadId, 'calling').catch(console.error);
+    }
+  }, [activeCall, dialingLeadId]);
+
+  const currentScript = campaigns[0]?.script ?? null;
 
   const handleManualCall = useCallback(
     async (number: string, leadId?: string) => {
-      if (!callerId) return;
+      initAudioContext().catch(() => {});
 
-      // Pre-flight Credit Lockout Safeguard:
       if (creditBalance && creditBalance.credits < 0.05) {
         setToastType('error');
-        setToastMessage('INSUFFICIENT CREDITS: Your organization balance is depleted ($0.00). Please contact Super Admin.');
+        setToastMessage('Outbound call blocked: Insufficient organization credits. Please contact admin.');
         setTimeout(() => setToastMessage(null), 6000);
         return;
       }
 
-      // 1. Log manual call
-      const logRes = await api.calls
-        .logManual({ agentId: agent.id, phoneNumber: number, leadId })
-        .catch((err) => {
-          setToastType('error');
-          setToastMessage(err.message || 'Call initiation blocked');
-          setTimeout(() => setToastMessage(null), 5000);
-          return null;
-        });
+      if (!number) return;
+      const normalized = formatE164(number);
 
-      if (!logRes) return;
-
-      // 2. Initiate call
-      const callLogId = logRes.id ?? null;
-      newCall(number, callerId, callLogId, leadId || null);
-
-      // 3. Update lead status if applicable
       if (leadId) {
         setDialingLeadId(leadId);
-        setSessionDialed((prev) => prev + 1);
-        await api.leads.updateStatus(leadId, 'calling').catch(console.error);
-        fetchLeads();
+        setSessionDialed((d) => d + 1);
+      } else {
+        setDialingLeadId(null);
+      }
+
+      try {
+        await newCall(normalized, callerId || undefined);
+      } catch (err: any) {
+        console.error('Call failed to start:', err);
+        setToastType('error');
+        setToastMessage(err.message || 'Call failed to initiate');
+        setTimeout(() => setToastMessage(null), 5000);
       }
     },
-    [agent.id, newCall, callerId, creditBalance],
+    [newCall, callerId, creditBalance],
   );
 
   const handleDispositionSubmitted = useCallback(() => {
@@ -245,48 +245,54 @@ export function AgentDashboard({ agent, onLogout }: Props) {
   }, [isAutoDialEnabled, currentStatus, connectionState, activeCall, showDisposition, handleManualCall, leads, creditBalance]);
 
   const displayAgent = agent;
+  const visualizerStatus = activeCall
+    ? 'active'
+    : currentStatus === 'dialing' || currentStatus === 'on_call'
+    ? 'active'
+    : (currentStatus as any);
 
   return (
     <div
-      className="min-h-screen bg-[#0B0F19] text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-950"
+      className="min-h-screen bg-[#070A12] text-slate-100 flex flex-col font-sans selection:bg-emerald-500/30 selection:text-emerald-300"
       onClick={() => initAudioContext()}
       onKeyDown={() => initAudioContext()}
     >
-      {/* ── Top Header ── */}
-      <header className="sticky top-0 z-40 bg-[#0E131F]/90 backdrop-blur-md border-b border-slate-800/80 px-6 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-bold text-sm shadow-md shadow-emerald-500/20">
+      {/* ── Top Header Navigation ── */}
+      <header className="sticky top-0 z-40 bg-slate-950/80 backdrop-blur-xl border-b border-slate-800/80 px-6 py-3.5 flex items-center justify-between shadow-lg">
+        {/* Logo & Brand Identity */}
+        <div className="flex items-center gap-3.5">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 font-black text-slate-950 text-base flex-shrink-0">
             N
           </div>
-          <div>
-            <div className="text-sm font-bold tracking-tight text-white flex items-center gap-2">
-              <span>NextGenDial</span>
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <div className="flex flex-col">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-sm tracking-wide text-white">NextGenDial</span>
+              <span className="text-[10px] font-semibold text-emerald-400 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 font-mono tracking-wider">
                 ENTERPRISE
               </span>
             </div>
-            <div className="text-[11px] text-slate-400">Agent Telephony Console</div>
+            <p className="text-[11px] text-slate-400 font-medium">Agent Telephony Console</p>
           </div>
         </div>
 
-        {/* Action Controls & Vitals */}
+        {/* Global Controls & Status */}
         <div className="flex items-center gap-3">
           {/* Tenant Credits Safeguard Pill */}
           {creditBalance !== null && (
             <div
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-mono transition-all ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-mono transition-all shadow-sm ${
                 creditBalance.credits < 0.5
-                  ? 'bg-rose-950/40 border-rose-800/60 text-rose-300'
+                  ? 'bg-rose-950/50 border-rose-800/60 text-rose-300'
                   : 'bg-slate-900/80 border-slate-700/60 text-slate-300'
               }`}
               title="Organization Prepaid Calling Credits"
             >
               <span className="text-[10px] uppercase font-sans font-semibold text-slate-400">Credit:</span>
-              <span className="font-semibold text-emerald-400">
+              <span className="font-bold text-emerald-400">
                 {formatCurrency(creditBalance.credits)}
               </span>
               {creditBalance.credits < 0.05 && (
-                <span className="text-[10px] bg-rose-500 text-white px-1.5 py-0.2 rounded font-sans uppercase font-bold animate-pulse">
+                <span className="text-[10px] bg-rose-500 text-white px-1.5 py-0.5 rounded font-sans uppercase font-bold animate-pulse">
                   Cutoff
                 </span>
               )}
@@ -295,13 +301,15 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
           {/* Callbacks Drawer Button */}
           <button
+            type="button"
             onClick={() => setIsCallbackDrawerOpen(true)}
-            className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/60 text-xs text-slate-200 transition-all"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/50 text-xs font-medium text-slate-200 transition-all shadow-sm active:scale-95"
             title="Scheduled Callbacks"
           >
-            <span>📅 Callbacks</span>
+            <PhoneCall className="w-3.5 h-3.5 text-amber-400" />
+            <span>Callbacks</span>
             {pendingCallbacksCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 animate-pulse">
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-slate-950 animate-pulse ml-0.5">
                 {pendingCallbacksCount}
               </span>
             )}
@@ -309,14 +317,16 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
           {/* SMS Inbox Button */}
           <button
+            type="button"
             onClick={() => {
               setSmsTargetPhone('');
               setIsSMSInboxOpen(true);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-700/60 text-xs text-slate-200 transition-all"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/50 text-xs font-medium text-slate-200 transition-all shadow-sm active:scale-95"
             title="Two-Way SMS"
           >
-            <span>💬 SMS Inbox</span>
+            <MessageSquare className="w-3.5 h-3.5 text-cyan-400" />
+            <span>SMS Inbox</span>
           </button>
 
           {/* WebRTC Status Indicator */}
@@ -328,8 +338,10 @@ export function AgentDashboard({ agent, onLogout }: Props) {
           )}
           {connectionState === 'error' && (
             <div className="flex items-center gap-1.5 text-xs text-rose-400 bg-rose-500/10 border border-rose-500/30 px-2.5 py-1 rounded-xl">
-              <span>⚠ Disconnected</span>
+              <ShieldAlert className="w-3.5 h-3.5" />
+              <span>Disconnected</span>
               <button
+                type="button"
                 onClick={retryConnection}
                 className="ml-1 text-[11px] underline font-semibold hover:text-white"
               >
@@ -338,9 +350,11 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             </div>
           )}
 
+          <div className="h-5 w-[1px] bg-slate-800 mx-1 hidden sm:block" />
+
           {/* Agent Pill */}
-          <div className="flex items-center gap-2 pl-2 border-l border-slate-800">
-            <div className="w-8 h-8 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-slate-200">
+          <div className="flex items-center gap-2 pl-2">
+            <div className="w-8 h-8 rounded-xl bg-slate-800/80 border border-slate-700/70 flex items-center justify-center text-xs font-bold text-slate-200 shadow-sm">
               {displayAgent.username?.charAt(0).toUpperCase() || '?'}
             </div>
             <div className="hidden sm:block text-left">
@@ -349,18 +363,22 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             </div>
           </div>
 
+          {/* Sign Out Button */}
           <button
+            type="button"
             onClick={onLogout}
-            className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-100 hover:bg-slate-800 rounded-xl transition-colors"
+            className="p-2 text-slate-400 hover:text-rose-400 rounded-xl hover:bg-slate-800/50 transition-colors ml-1"
+            title="Sign Out"
+            aria-label="Sign Out"
           >
-            Sign Out
+            <LogOut className="w-4 h-4" />
           </button>
         </div>
       </header>
 
       {/* Credit Lockout Warning Banner */}
       {creditBalance && creditBalance.credits < 0.05 && (
-        <div className="bg-rose-950/70 border-b border-rose-800/80 px-6 py-2.5 flex items-center justify-between text-xs text-rose-200 animate-fade-in">
+        <div className="bg-rose-950/70 border-b border-rose-800/80 px-6 py-2.5 flex items-center justify-between text-xs text-rose-200">
           <div className="flex items-center gap-2">
             <span className="text-base">🚨</span>
             <span>
@@ -370,8 +388,9 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             </span>
           </div>
           <button
+            type="button"
             onClick={fetchCredits}
-            className="text-[11px] px-2.5 py-1 bg-rose-900/60 hover:bg-rose-800 border border-rose-700 rounded-lg"
+            className="text-[11px] px-2.5 py-1 bg-rose-900/60 hover:bg-rose-800 border border-rose-700 rounded-lg transition-colors"
           >
             Refresh Balance
           </button>
@@ -405,7 +424,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
       {/* Toast Alert */}
       {toastMessage && (
         <div
-          className={`fixed top-16 left-1/2 transform -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl text-xs font-medium shadow-2xl flex items-center gap-2 border animate-fade-in ${
+          className={`fixed top-16 left-1/2 transform -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl text-xs font-medium shadow-2xl flex items-center gap-2 border ${
             toastType === 'warning'
               ? 'bg-amber-950/90 border-amber-800 text-amber-200'
               : toastType === 'info'
@@ -423,93 +442,100 @@ export function AgentDashboard({ agent, onLogout }: Props) {
       <audio id="remote-media" autoPlay />
       <audio id="local-media" autoPlay muted />
 
-      {/* ── Main Workspace ── */}
-      <div className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Sidebar: Status, Controls, Tactile Keypad */}
-        <aside className="lg:col-span-4 space-y-5">
-          {/* Status Selector Card */}
-          <div className="p-4 rounded-2xl bg-slate-900/40 border border-slate-800/80 backdrop-blur-md space-y-3">
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Agent Status</div>
-            <AgentStatusToggle status={currentStatus} changedAt={changedAt} onSetStatus={setStatus} />
+      {/* ── Main 12-Column Responsive Body ── */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left Column: Controls & Dialpad (4 Cols) */}
+        <div className="lg:col-span-4 flex flex-col gap-6">
+          {/* Status & 3D Visualizer Card */}
+          <div className="glass-panel rounded-3xl p-5 border border-slate-800/80 flex items-center justify-between shadow-2xl">
+            <div className="flex-1 pr-2">
+              <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-2">
+                Agent Status
+              </span>
+              <AgentStatusToggle status={currentStatus} changedAt={changedAt} onSetStatus={setStatus} />
 
-            {/* Auto-Dial & Sound Toggles */}
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-800/60">
-              <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-medium text-slate-300">Auto-Dial</div>
-                  <div className="text-[10px] text-slate-500">Auto queue</div>
+              {/* Auto-Dial & Sound Toggles */}
+              <div className="grid grid-cols-2 gap-2 pt-3 mt-3 border-t border-slate-800/60">
+                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-medium text-slate-300">Auto-Dial</div>
+                    <div className="text-[10px] text-slate-500">Auto queue</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsAutoDialEnabled(!isAutoDialEnabled)}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${
+                      isAutoDialEnabled
+                        ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {isAutoDialEnabled ? 'ON' : 'OFF'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsAutoDialEnabled(!isAutoDialEnabled)}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${
-                    isAutoDialEnabled
-                      ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
-                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {isAutoDialEnabled ? 'ON' : 'OFF'}
-                </button>
-              </div>
 
-              <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800 flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-medium text-slate-300">Audio</div>
-                  <div className="text-[10px] text-slate-500">DTMF tones</div>
+                <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between">
+                  <div>
+                    <div className="text-xs font-medium text-slate-300">Audio</div>
+                    <div className="text-[10px] text-slate-500">DTMF tones</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleMute}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${
+                      !isAudioMutedState
+                        ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {!isAudioMutedState ? 'ON' : 'OFF'}
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleToggleMute}
-                  className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${
-                    !isAudioMutedState
-                      ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
-                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {!isAudioMutedState ? 'ON' : 'OFF'}
-                </button>
               </div>
+            </div>
+
+            {/* Interactive 3D Audio Visualizer Orb */}
+            <div className="flex-shrink-0">
+              <TelephonyVisualizer3D status={visualizerStatus} />
             </div>
           </div>
 
-          {/* Tactile Keypad */}
-          <div className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800/80 backdrop-blur-md">
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
-              Manual Dialpad
+          {/* Keypad Component */}
+          {callerId === undefined ? (
+            <div className="w-full max-w-[340px] mx-auto glass-panel rounded-3xl p-8 border border-slate-800/80 text-center text-xs text-slate-500 shadow-2xl">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block mr-2" />
+              Loading telephony line...
             </div>
-            {callerId === undefined ? (
-              <div className="py-8 text-center text-xs text-slate-500">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping inline-block mr-2" />
-                Loading telephony line...
-              </div>
-            ) : callerId === null ? (
-              <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs">
-                <strong>No phone number assigned.</strong>
-                <p className="mt-1 text-slate-400">Ask your admin to allocate a line to your user account.</p>
-              </div>
-            ) : (
-              <Keypad
-                onCall={handleManualCall}
-                disabled={
-                  connectionState !== 'ready' ||
-                  currentStatus === 'on_call' ||
-                  currentStatus === 'dialing' ||
-                  currentStatus === 'wrap_up'
-                }
-                callerIdOverride={callerId}
-              />
-            )}
-          </div>
-        </aside>
+          ) : callerId === null ? (
+            <div className="w-full max-w-[340px] mx-auto glass-panel rounded-3xl p-6 border border-rose-900/50 bg-rose-950/20 text-rose-300 text-xs shadow-2xl">
+              <strong className="block text-sm mb-1 text-white">No Telephony Line Assigned</strong>
+              <p className="text-slate-400">
+                Contact your administrator to allocate a Telnyx DID phone number to your agent profile.
+              </p>
+            </div>
+          ) : (
+            <Keypad
+              onCall={handleManualCall}
+              disabled={
+                connectionState !== 'ready' ||
+                currentStatus === 'on_call' ||
+                currentStatus === 'dialing' ||
+                currentStatus === 'wrap_up'
+              }
+              isActiveCall={Boolean(activeCall || currentStatus === 'on_call')}
+              callerIdOverride={callerId}
+            />
+          )}
+        </div>
 
-        {/* Right Content: Leads, Auto-dial session, Call History */}
-        <main className="lg:col-span-8 space-y-6">
+        {/* Right Column: Leads & Call History (8 Cols) */}
+        <div className="lg:col-span-8 flex flex-col gap-6">
           {/* Active Auto-Dial Session Bar */}
           {isAutoDialEnabled && (
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-slate-900/60 to-slate-900/40 border border-emerald-500/30 flex items-center justify-between">
+            <div className="p-4 rounded-3xl bg-gradient-to-r from-emerald-950/40 via-slate-900/60 to-slate-900/40 border border-emerald-500/30 flex items-center justify-between shadow-xl">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
-                  ⚡
+                <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 font-bold">
+                  <Zap className="w-5 h-5 fill-current" />
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold text-white">Auto-Dialer Session Active</h3>
@@ -520,6 +546,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                 </div>
               </div>
               <button
+                type="button"
                 onClick={() => setIsAutoDialEnabled(false)}
                 className="px-3 py-1.5 text-xs font-semibold bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 rounded-xl transition-all"
               >
@@ -528,27 +555,32 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             </div>
           )}
 
-          {/* Pending Leads Section */}
-          <div className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800/80 backdrop-blur-md space-y-4">
-            <div className="flex items-center justify-between">
+          {/* Assigned Leads Card */}
+          <div className="glass-panel rounded-3xl p-6 border border-slate-800/80 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
               <div>
-                <h2 className="text-sm font-semibold text-slate-100">Assigned Leads (Pending)</h2>
-                <p className="text-xs text-slate-400">Contacts ready for outbound outreach</p>
+                <h2 className="text-base font-bold text-white tracking-tight">Assigned Leads (Pending)</h2>
+                <p className="text-xs text-slate-400">Contacts queued for auto or manual outreach</p>
               </div>
               <button
+                type="button"
                 onClick={() => fetchLeads()}
-                className="px-3 py-1.5 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition-colors"
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700/50 text-xs font-medium text-slate-200 transition-all shadow-sm active:scale-95"
               >
-                Refresh Leads
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingLeads ? 'animate-spin' : ''}`} />
+                <span>Refresh Leads</span>
               </button>
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-slate-800/80 bg-slate-950/40">
+            <div className="overflow-x-auto rounded-2xl border border-slate-800/60 bg-slate-950/40">
               {loadingLeads ? (
-                <div className="py-8 text-center text-xs text-slate-500">Loading leads...</div>
+                <div className="h-32 flex items-center justify-center text-xs text-slate-500 gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span>Loading assigned leads...</span>
+                </div>
               ) : leads.length === 0 ? (
-                <div className="py-8 text-center text-xs text-slate-500">
-                  No pending leads assigned to you right now.
+                <div className="h-32 rounded-2xl border border-dashed border-slate-800/80 flex items-center justify-center bg-slate-950/30">
+                  <span className="text-xs text-slate-500">No pending leads assigned. Upload leads to start.</span>
                 </div>
               ) : (
                 <table className="w-full text-left text-xs border-collapse">
@@ -568,7 +600,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                           <td className="py-3 px-4 font-medium text-slate-200">{name}</td>
                           <td className="py-3 px-4 font-mono text-slate-300">{formatE164(lead.phone_number)}</td>
                           <td className="py-3 px-4">
-                            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700/60">
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700/60">
                               {lead.status}
                             </span>
                           </td>
@@ -576,17 +608,19 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                             <div className="inline-flex items-center gap-2">
                               {/* 2-Way SMS trigger */}
                               <button
+                                type="button"
                                 onClick={() => {
                                   setSmsTargetPhone(lead.phone_number);
                                   setIsSMSInboxOpen(true);
                                 }}
                                 title="Send SMS"
-                                className="p-1.5 text-slate-400 hover:text-emerald-400 hover:bg-slate-800 rounded-lg transition-colors"
+                                className="p-1.5 text-slate-400 hover:text-cyan-400 hover:bg-slate-800/60 rounded-lg transition-colors"
                               >
-                                💬
+                                <MessageSquare className="w-4 h-4" />
                               </button>
                               {/* Dial Trigger */}
                               <button
+                                type="button"
                                 onClick={() => handleManualCall(lead.phone_number, lead.id)}
                                 disabled={
                                   !callerId ||
@@ -594,7 +628,7 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                                   currentStatus === 'on_call' ||
                                   currentStatus === 'wrap_up'
                                 }
-                                className="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold rounded-lg shadow-sm shadow-emerald-500/20 active:scale-95 transition-all disabled:opacity-40"
+                                className="px-3 py-1 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-semibold rounded-lg shadow-sm shadow-emerald-500/20 active:scale-95 transition-all disabled:opacity-40"
                               >
                                 Dial
                               </button>
@@ -609,16 +643,10 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             </div>
           </div>
 
-          {/* Call History Section */}
-          <div className="p-5 rounded-2xl bg-slate-900/40 border border-slate-800/80 backdrop-blur-md space-y-4">
-            <div>
-              <h2 className="text-sm font-semibold text-slate-100">Call History & Diagnostics</h2>
-              <p className="text-xs text-slate-400">Accurate elapsed durations and dispositions</p>
-            </div>
-            <CallHistoryTable agentId={agent.id} />
-          </div>
-        </main>
-      </div>
+          {/* Call History Table */}
+          <CallHistoryTable agentId={agent.id} />
+        </div>
+      </main>
 
       {/* ── Slide-Over Callbacks Drawer ── */}
       <CallbackDrawer

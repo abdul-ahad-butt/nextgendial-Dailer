@@ -1,4 +1,5 @@
 import React, { useCallback, useState, useEffect } from 'react';
+import { Phone, Delete, Volume2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { getAudioMuted, initAudioContext } from '../../lib/audio';
 import { formatE164 } from '../../utils/formatters';
@@ -19,18 +20,18 @@ interface KeypadProps {
 }
 
 const KEYS = [
-  { digit: '1', sub: '' },
-  { digit: '2', sub: 'ABC' },
-  { digit: '3', sub: 'DEF' },
-  { digit: '4', sub: 'GHI' },
-  { digit: '5', sub: 'JKL' },
-  { digit: '6', sub: 'MNO' },
-  { digit: '7', sub: 'PQRS' },
-  { digit: '8', sub: 'TUV' },
-  { digit: '9', sub: 'WXYZ' },
-  { digit: '*', sub: '•' },
-  { digit: '0', sub: '+' },
-  { digit: '#', sub: '⌗' },
+  { num: '1', sub: ' ' },
+  { num: '2', sub: 'ABC' },
+  { num: '3', sub: 'DEF' },
+  { num: '4', sub: 'GHI' },
+  { num: '5', sub: 'JKL' },
+  { num: '6', sub: 'MNO' },
+  { num: '7', sub: 'PQRS' },
+  { num: '8', sub: 'TUV' },
+  { num: '9', sub: 'WXYZ' },
+  { num: '*', sub: ' ' },
+  { num: '0', sub: '+' },
+  { num: '#', sub: ' ' },
 ];
 
 let localAudioCtx: AudioContext | null = null;
@@ -93,21 +94,20 @@ export const Keypad: React.FC<KeypadProps> = ({
     } catch {}
   }, []);
 
-  const append = useCallback((digit: string) => {
-    playTone(digit);
-    if (isActiveCall && onDTMF) {
-      onDTMF(digit);
-    } else {
-      setNumber((n) => (n.length < 20 ? n + digit : n));
-    }
-  }, [isActiveCall, onDTMF, playTone]);
+  const handleKeyClick = useCallback(
+    (val: string) => {
+      playTone(val);
+      if (isActiveCall && onDTMF) {
+        onDTMF(val);
+      } else {
+        setNumber((prev) => (prev.length < 20 ? prev + val : prev));
+      }
+    },
+    [isActiveCall, onDTMF, playTone]
+  );
 
-  const backspace = useCallback(() => {
-    setNumber((n) => n.slice(0, -1));
-  }, []);
-
-  const clearNumber = useCallback(() => {
-    setNumber('');
+  const handleBackspace = useCallback(() => {
+    setNumber((prev) => prev.slice(0, -1));
   }, []);
 
   const handleCall = useCallback(() => {
@@ -124,9 +124,9 @@ export const Keypad: React.FC<KeypadProps> = ({
 
       const key = e.key;
       if (/^[0-9*#]$/.test(key)) {
-        append(key);
+        handleKeyClick(key);
       } else if (key === 'Backspace') {
-        backspace();
+        handleBackspace();
       } else if (key === 'Enter') {
         handleCall();
       }
@@ -134,105 +134,99 @@ export const Keypad: React.FC<KeypadProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [disabled, append, backspace, handleCall]);
+  }, [disabled, handleKeyClick, handleBackspace, handleCall]);
 
   return (
-    <div className="tactile-keypad-container" aria-label="Tactile Dialer Keypad">
+    <div className="w-full max-w-[340px] mx-auto glass-panel rounded-3xl p-6 shadow-2xl border border-slate-800/80 transition-all hover:border-slate-700/80">
       {/* Caller ID Badge */}
-      <div className="caller-id-badge">
-        <div className="caller-id-badge__label">CALLER ID / LINE</div>
-        <div className="caller-id-badge__number">
-          <span className="live-dot" />
-          {callerId || 'Unassigned Line'}
-        </div>
+      <div className="flex items-center justify-between pb-4 border-b border-slate-800/60 mb-4">
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+          Caller ID / Line
+        </span>
+        <span className="text-xs font-mono font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20 flex items-center gap-1.5 shadow-sm">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          {callerId || '+1 (Standard Line)'}
+        </span>
       </div>
 
-      {/* Number Display with Mono Typography */}
-      <div className="keypad-screen">
-        <div
-          className={`keypad-screen__digits ${!number ? 'keypad-screen__placeholder' : ''}`}
-          aria-live="polite"
-        >
-          {number || 'Enter number'}
-        </div>
+      {/* Number Display Screen */}
+      <div className="relative mb-5 bg-slate-950/70 border border-slate-800/90 rounded-2xl p-4 flex items-center justify-between shadow-inner group focus-within:border-emerald-500/50 transition-colors">
+        <input
+          type="text"
+          value={number}
+          placeholder="Enter number..."
+          onChange={(e) => setNumber(e.target.value)}
+          disabled={disabled}
+          className="bg-transparent text-xl font-mono tracking-wider font-semibold text-white outline-none w-full placeholder:text-slate-600"
+          aria-label="Phone number to dial"
+        />
         {number && (
           <button
             type="button"
-            className="keypad-screen__clear-btn"
-            onClick={clearNumber}
-            title="Clear number"
-            aria-label="Clear number"
+            onClick={handleBackspace}
+            className="p-1.5 text-slate-400 hover:text-rose-400 transition-colors rounded-lg hover:bg-slate-800/60 ml-2"
+            title="Backspace"
+            aria-label="Delete last digit"
           >
-            ✕
+            <Delete className="w-5 h-5" />
           </button>
         )}
       </div>
 
-      {/* Audio Waveform Bar (active during call) */}
+      {/* Live Audio Waveform when In Call */}
       {isActiveCall && (
-        <div className="keypad-wave-bar" aria-label="Audio wave active">
-          <span className="wave-bar wave-bar--1" />
-          <span className="wave-bar wave-bar--2" />
-          <span className="wave-bar wave-bar--3" />
-          <span className="wave-bar wave-bar--4" />
-          <span className="wave-bar wave-bar--5" />
-          <span className="wave-bar wave-bar--6" />
-          <span className="wave-bar wave-bar--7" />
-          <span className="wave-label">LIVE AUDIO STREAM</span>
+        <div className="mb-4 py-2 px-3 rounded-xl bg-emerald-950/30 border border-emerald-800/40 flex items-center justify-between">
+          <div className="flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
+            <Volume2 className="w-3.5 h-3.5 animate-pulse" />
+            <span className="tracking-wide text-[11px]">LIVE AUDIO STREAM</span>
+          </div>
+          <div className="flex items-end gap-1 h-3.5">
+            <span className="w-1 bg-emerald-400 rounded-full animate-bounce h-2" style={{ animationDelay: '0ms' }} />
+            <span className="w-1 bg-emerald-400 rounded-full animate-bounce h-3.5" style={{ animationDelay: '150ms' }} />
+            <span className="w-1 bg-emerald-400 rounded-full animate-bounce h-1.5" style={{ animationDelay: '300ms' }} />
+            <span className="w-1 bg-emerald-400 rounded-full animate-bounce h-3" style={{ animationDelay: '450ms' }} />
+          </div>
         </div>
       )}
 
-      {/* Tactile Keypad Keys Grid */}
-      <div className="tactile-grid" role="group" aria-label="Dialpad Keys">
-        {KEYS.map(({ digit, sub }) => (
+      {/* 3x4 Tactile Keypad Grid */}
+      <div className="grid grid-cols-3 gap-3 mb-5" role="group" aria-label="Dialpad keys">
+        {KEYS.map((k) => (
           <button
-            key={digit}
-            id={`tactile-key-${digit === '*' ? 'star' : digit === '#' ? 'hash' : digit}`}
+            key={k.num}
             type="button"
-            className="tactile-key"
-            onClick={() => append(digit)}
+            onClick={() => handleKeyClick(k.num)}
             disabled={disabled}
-            aria-label={`${digit} ${sub}`}
+            className="group relative flex flex-col items-center justify-center h-14 rounded-2xl bg-slate-800/40 hover:bg-slate-700/50 active:scale-95 border border-slate-700/40 hover:border-emerald-500/30 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:pointer-events-none"
+            aria-label={`Digit ${k.num}`}
           >
-            <span className="tactile-key__digit">{digit}</span>
-            {sub && <span className="tactile-key__sub">{sub}</span>}
+            <span className="text-xl font-semibold text-white group-hover:text-emerald-300 transition-colors font-mono">
+              {k.num}
+            </span>
+            {k.sub !== ' ' && (
+              <span className="text-[9px] tracking-widest text-slate-400 font-medium">
+                {k.sub}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      {/* Bottom Actions Row */}
-      <div className="tactile-actions">
-        <button
-          type="button"
-          id="tactile-backspace-btn"
-          className="tactile-action-btn tactile-action-btn--secondary"
-          onClick={backspace}
-          disabled={!number || disabled}
-          aria-label="Delete last digit"
-        >
-          ⌫
-        </button>
-
-        <button
-          type="button"
-          id="tactile-call-btn"
-          className="tactile-action-btn tactile-action-btn--call"
-          onClick={handleCall}
-          disabled={!number || disabled || isActiveCall}
-          aria-label={`Dial ${number || 'number'}`}
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            style={{ marginRight: 6 }}
-          >
-            <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.01L6.6 10.8z" />
-          </svg>
-          {isActiveCall ? 'In Call' : 'Call'}
-        </button>
-      </div>
+      {/* Call Button */}
+      <button
+        type="button"
+        onClick={handleCall}
+        disabled={isActiveCall || !number || disabled}
+        className={`w-full py-4 rounded-2xl flex items-center justify-center gap-3 font-semibold text-base transition-all duration-200 shadow-lg disabled:opacity-40 disabled:pointer-events-none ${
+          isActiveCall
+            ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-900/30'
+            : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 shadow-emerald-500/25 active:scale-[0.98]'
+        }`}
+        aria-label={isActiveCall ? 'In Call' : 'Call Now'}
+      >
+        <Phone className="w-5 h-5 fill-current" />
+        <span>{isActiveCall ? 'In Call' : 'Call Now'}</span>
+      </button>
     </div>
   );
 };

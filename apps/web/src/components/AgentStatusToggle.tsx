@@ -1,7 +1,7 @@
 /**
  * apps/web/src/components/AgentStatusToggle.tsx
  *
- * Three-button toggle: Available / Break / Offline.
+ * Three-button pill toggle: Available / Break / Offline.
  * Disabled during engine-controlled states (dialing, on_call, wrap_up).
  * Server is the source of truth — this reflects polled agent.status.
  */
@@ -18,14 +18,12 @@ interface Props {
 const STATUS_OPTIONS: {
   status: AgentStatus;
   label: string;
-  description: string;
 }[] = [
-  { status: 'available', label: 'Available', description: 'Ready to receive calls' },
-  { status: 'break',     label: 'Break',     description: 'Temporarily unavailable' },
-  { status: 'offline',   label: 'Offline',   description: 'End shift' },
+  { status: 'available', label: 'Available' },
+  { status: 'break',     label: 'Break' },
+  { status: 'offline',   label: 'Offline' },
 ];
 
-// States that the engine controls — agent cannot manually switch out of these
 const ENGINE_CONTROLLED: AgentStatus[] = ['dialing', 'on_call', 'wrap_up'];
 
 export function AgentStatusToggle({ status, changedAt, onSetStatus }: Props) {
@@ -56,24 +54,19 @@ export function AgentStatusToggle({ status, changedAt, onSetStatus }: Props) {
   const isEngineControlled = ENGINE_CONTROLLED.includes(status);
 
   return (
-    <div className="status-toggle">
-      <div className="status-toggle-label">Status</div>
-
+    <div className="flex flex-col gap-2">
       {isEngineControlled && (
-        <div
-          className={`agent-status-badge agent-status-badge--${status}`}
-          style={{ marginBottom: 8, alignSelf: 'flex-start' }}
-          role="status"
-          aria-live="polite"
-        >
-          <span className={`status-dot status-dot--${status}`} aria-hidden="true" />
-          {status === 'dialing'  && 'Dialing…'}
-          {status === 'on_call'  && 'On Call'}
-          {status === 'wrap_up'  && 'Wrap-Up'}
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold border self-start shadow-sm animate-pulse bg-amber-500/10 text-amber-400 border-amber-500/20">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          <span>
+            {status === 'dialing' && 'Dialing…'}
+            {status === 'on_call' && 'On Live Call'}
+            {status === 'wrap_up' && 'Wrap-Up Period'}
+          </span>
         </div>
       )}
 
-      <div className="status-buttons" role="group" aria-label="Agent status">
+      <div className="inline-flex p-1 rounded-2xl bg-slate-950/80 border border-slate-800/80 gap-1 shadow-inner" role="group" aria-label="Agent status">
         {STATUS_OPTIONS.map((opt) => {
           const isActive = status === opt.status;
           const isDisabled = isEngineControlled;
@@ -82,20 +75,36 @@ export function AgentStatusToggle({ status, changedAt, onSetStatus }: Props) {
             <button
               key={opt.status}
               id={`status-btn-${opt.status}`}
-              className={`status-btn${isActive ? ' status-btn--active' : ''}`}
+              type="button"
               disabled={isDisabled}
               aria-pressed={isActive}
-              aria-label={`${opt.label} — ${opt.description}`}
               onClick={() => {
                 if (!isDisabled && !isActive) {
                   onSetStatus(opt.status).catch(console.error);
                 }
               }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold capitalize transition-all duration-150 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed ${
+                isActive
+                  ? opt.status === 'available'
+                    ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20 font-bold'
+                    : opt.status === 'break'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20 font-bold'
+                    : 'bg-slate-700 text-white shadow-md shadow-slate-900/40'
+                  : 'text-slate-400 hover:text-white hover:bg-slate-800/40'
+              }`}
             >
-              <span className={`status-dot status-dot--${opt.status}`} aria-hidden="true" />
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  opt.status === 'available'
+                    ? 'bg-emerald-400'
+                    : opt.status === 'break'
+                    ? 'bg-amber-400'
+                    : 'bg-slate-400'
+                }`}
+              />
               <span>{opt.label}</span>
               {isActive && opt.status === 'break' && (
-                <span style={{ marginLeft: 'auto', fontSize: '0.85em', color: 'var(--warning)', fontWeight: 'bold' }}>
+                <span className="ml-1 text-[10px] font-mono font-bold text-slate-950 bg-amber-400/80 px-1 rounded">
                   {formatTime(elapsed)}
                 </span>
               )}
@@ -105,17 +114,12 @@ export function AgentStatusToggle({ status, changedAt, onSetStatus }: Props) {
       </div>
 
       {isEngineControlled && (
-        <p
-          className="text-sm text-muted"
-          style={{ padding: '0 4px' }}
-          role="note"
-        >
+        <p className="text-[11px] text-slate-400 px-1">
           {status === 'wrap_up'
-            ? 'Submit a disposition to continue.'
-            : 'Status is managed automatically.'}
+            ? 'Submit a disposition in the dialog to continue.'
+            : 'Status is actively managed by current telephony session.'}
         </p>
       )}
     </div>
   );
 }
-
