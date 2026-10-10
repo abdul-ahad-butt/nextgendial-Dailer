@@ -1,5 +1,33 @@
 {
   "version": 1,
-  "computedAt": "2026-10-09T19:14:04.848Z",
-  "skills": {}
+  "computedAt": "2026-10-10T00:23:08.881Z",
+  "skills": {
+    "deployment-practical": {
+      "skill": "deployment-practical",
+      "observations": 0,
+      "manualInvocations": 0,
+      "recommendationInvocations": 0,
+      "successCount": 0,
+      "reuseCount": 0,
+      "affinityScore": 0
+    },
+    "github-actions-ci": {
+      "skill": "github-actions-ci",
+      "observations": 0,
+      "manualInvocations": 0,
+      "recommendationInvocations": 0,
+      "successCount": 0,
+      "reuseCount": 0,
+      "affinityScore": 0
+    },
+    "skill-feedback-adaptation": {
+      "skill": "skill-feedback-adaptation",
+      "observations": 0,
+      "manualInvocations": 0,
+      "recommendationInvocations": 0,
+      "successCount": 0,
+      "reuseCount": 0,
+      "affinityScore": 0
+    }
+  }
 }

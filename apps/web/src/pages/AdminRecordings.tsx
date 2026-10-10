@@ -161,13 +161,13 @@ export function AdminRecordings() {
                 </tr>
               </thead>
               <tbody>
-                {recordings.map(r => (
-                  <tr key={r.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                {(recordings || []).map(r => (
+                  <tr key={r?.id || Math.random()} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}>
-                      {new Date(r.created_at).toLocaleString()}
+                      {r?.created_at ? new Date(r.created_at).toLocaleString() : 'N/A'}
                     </td>
                     <td style={{ padding: '12px 8px' }}>
-                      {r.agent_username || <span style={{ color: 'var(--text-muted)' }}>Unknown</span>}
+                      {r?.agent_username || <span style={{ color: 'var(--text-muted)' }}>Unknown</span>}
                     </td>
                     <td style={{ padding: '12px 8px' }}>
                       <span
@@ -178,19 +178,19 @@ export function AdminRecordings() {
                           letterSpacing: '0.05em',
                           padding: '2px 8px',
                           borderRadius: 4,
-                          background: r.direction === 'inbound' ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.15)',
-                          color: r.direction === 'inbound' ? '#4ade80' : '#818cf8',
+                          background: r?.direction === 'inbound' ? 'rgba(34,197,94,0.15)' : 'rgba(99,102,241,0.15)',
+                          color: r?.direction === 'inbound' ? '#4ade80' : '#818cf8',
                         }}
                       >
-                        {r.direction || 'outbound'}
+                        {r?.direction || 'outbound'}
                       </span>
                     </td>
-                    <td style={{ padding: '12px 8px', fontFamily: 'monospace' }}>{r.destination_number || '—'}</td>
+                    <td style={{ padding: '12px 8px', fontFamily: 'monospace' }}>{r?.destination_number || '—'}</td>
                     <td style={{ padding: '12px 8px', whiteSpace: 'nowrap' }}>
-                      {formatDuration(r.duration_seconds)}
+                      {formatDuration(r?.duration_seconds || 0)}
                     </td>
                     <td style={{ padding: '12px 8px' }}>
-                      {r.playback_url ? (
+                      {r?.playback_url ? (
                         <audio controls src={r.playback_url} style={{ height: 32, minWidth: 200 }} />
                       ) : (
                         <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Not available</span>

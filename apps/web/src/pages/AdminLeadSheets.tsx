@@ -104,23 +104,23 @@ export function AdminLeadSheets() {
               </tr>
             </thead>
             <tbody>
-              {batches.map(b => (
-                <tr key={b.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '12px 8px', fontWeight: 500 }}>{b.file_name}</td>
+              {(batches || []).map(b => (
+                <tr key={b?.id || Math.random()} style={{ borderBottom: '1px solid var(--border)' }}>
+                  <td style={{ padding: '12px 8px', fontWeight: 500 }}>{b?.file_name || 'Unnamed Sheet'}</td>
                   <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
-                    {new Date(b.uploaded_at).toLocaleString()}
+                    {b?.uploaded_at ? new Date(b.uploaded_at).toLocaleString() : 'N/A'}
                   </td>
                   <td style={{ padding: '12px 8px' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <div>{b.dialed_count} / {b.total_leads} Dialed</div>
+                      <div>{b?.dialed_count || 0} / {b?.total_leads || 0} Dialed</div>
                       <div style={{ height: 6, width: '100%', background: 'var(--surface-hover)', borderRadius: 3, overflow: 'hidden' }}>
-                         <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, (b.dialed_count / (b.total_leads || 1)) * 100))}%`, background: 'var(--primary)' }} />
+                         <div style={{ height: '100%', width: `${Math.min(100, Math.max(0, ((b?.dialed_count || 0) / (b?.total_leads || 1)) * 100))}%`, background: 'var(--primary)' }} />
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{b.completed_count} Completed, {b.pending_count} Pending</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{b?.completed_count || 0} Completed, {b?.pending_count || 0} Pending</div>
                     </div>
                   </td>
                   <td style={{ padding: '12px 8px' }}>
-                    {b.assigned_agent_username ? (
+                    {b?.assigned_agent_username ? (
                       <span style={{ padding: '2px 8px', background: 'var(--primary-dim)', color: 'var(--primary)', borderRadius: 12, fontSize: 12, fontWeight: 500 }}>
                         {b.assigned_agent_username}
                       </span>
@@ -134,10 +134,10 @@ export function AdminLeadSheets() {
                     <button 
                       className="btn btn-ghost" 
                       style={{ color: 'var(--danger)', padding: '6px 12px', fontSize: 13 }}
-                      disabled={deletingBatchId === b.id}
-                      onClick={() => handleDeleteBatch(b.id)}
+                      disabled={!b?.id || deletingBatchId === b.id}
+                      onClick={() => b?.id && handleDeleteBatch(b.id)}
                     >
-                      {deletingBatchId === b.id ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Delete'}
+                      {deletingBatchId === b?.id ? <span className="spinner" style={{ width: 14, height: 14 }} /> : 'Delete'}
                     </button>
                   </td>
                 </tr>

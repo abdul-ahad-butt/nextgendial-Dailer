@@ -8,6 +8,8 @@ import { ProtectedRoute } from './components/ProtectedRoute';
 import { api } from './lib/api';
 import { useState, useEffect, lazy, Suspense } from 'react';
 
+import { ErrorBoundary } from './components/ErrorBoundary';
+
 const Login = lazy(() => import('./pages/Login').then(m => ({ default: m.Login })));
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const AdminLeadSheets = lazy(() => import('./pages/AdminLeadSheets').then(m => ({ default: m.AdminLeadSheets })));
@@ -75,12 +77,16 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             
-            <Route element={<ProtectedRoute allowedRole="admin" />}>
-              <Route path="/admin/recordings" element={<AdminRecordings />} />
-              <Route path="/admin/leadsheets" element={<AdminLeadSheets />} />
-              <Route path="/admin/leads" element={<AdminLeads />} />
-              <Route path="/admin/agent-status" element={<AdminAgentStatus />} />
-              <Route path="/admin/*" element={<AdminDashboard />} />
+            <Route element={
+              <ErrorBoundary>
+                <ProtectedRoute allowedRole="admin" />
+              </ErrorBoundary>
+            }>
+              <Route path="/admin/recordings" element={<ErrorBoundary><AdminRecordings /></ErrorBoundary>} />
+              <Route path="/admin/leadsheets" element={<ErrorBoundary><AdminLeadSheets /></ErrorBoundary>} />
+              <Route path="/admin/leads" element={<ErrorBoundary><AdminLeads /></ErrorBoundary>} />
+              <Route path="/admin/agent-status" element={<ErrorBoundary><AdminAgentStatus /></ErrorBoundary>} />
+              <Route path="/admin/*" element={<ErrorBoundary><AdminDashboard /></ErrorBoundary>} />
             </Route>
             
             <Route element={<ProtectedRoute allowedRole="agent" />}>

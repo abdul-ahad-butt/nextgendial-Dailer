@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-09T19:14:04.455Z",
+  "generatedAt": "2026-10-10T00:22:48.291Z",
   "workspacePath": "c:\\Users\\Abdul Ahad Butt\\Desktop\\Nextgendial-Dailer\\nextgendial-Dailer",
   "branch": "main",
   "skills": [
@@ -94,9 +94,10 @@
       ],
       "isRelevant": true,
       "matchedGlobs": [
+        "**/.github/**/*.md",
         "**/src/**"
       ],
-      "installedInWorkspace": false,
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": false
@@ -153,7 +154,7 @@
       "matchedGlobs": [
         "**/.env*"
       ],
-      "installedInWorkspace": false,
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": false
@@ -198,7 +199,7 @@
       ],
       "isRelevant": false,
       "matchedGlobs": [],
-      "installedInWorkspace": false,
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": true
@@ -243,7 +244,7 @@
       ],
       "isRelevant": false,
       "matchedGlobs": [],
-      "installedInWorkspace": false,
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": true
@@ -255,9 +256,11 @@
         "**/.claude/learning/runs.jsonl",
         "**/.claude/skills/**"
       ],
-      "isRelevant": false,
-      "matchedGlobs": [],
-      "installedInWorkspace": false,
+      "isRelevant": true,
+      "matchedGlobs": [
+        "**/.claude/skills/**"
+      ],
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": true
@@ -271,8 +274,11 @@
         "**/.claude/learning/skill-adoption.jsonl",
         "**/.claude/learning/runs.jsonl"
       ],
-      "isRelevant": false,
-      "matchedGlobs": [],
+      "isRelevant": true,
+      "matchedGlobs": [
+        "**/.claude/learning/task-skill-proposals.json",
+        "**/.claude/learning/skill-adoption.jsonl"
+      ],
       "installedInWorkspace": false,
       "availableInGlobal": false,
       "inLibrary": true,
@@ -288,9 +294,10 @@
       ],
       "isRelevant": true,
       "matchedGlobs": [
+        "**/.claude/learning/task-skill-proposals.json",
         "**/.claude/learning/**"
       ],
-      "installedInWorkspace": false,
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": true
@@ -355,7 +362,7 @@
       ],
       "isRelevant": false,
       "matchedGlobs": [],
-      "installedInWorkspace": false,
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": true
@@ -519,7 +526,7 @@
       ],
       "isRelevant": false,
       "matchedGlobs": [],
-      "installedInWorkspace": false,
+      "installedInWorkspace": true,
       "availableInGlobal": false,
       "inLibrary": true,
       "requiredForProfileInit": true

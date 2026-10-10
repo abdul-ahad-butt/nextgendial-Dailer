@@ -28,14 +28,15 @@
     "remoteAuthors30d": 0,
     "upstreamAhead": 0,
     "upstreamBehind": 0,
-    "remoteProbeSource": "remote-tracking"
+    "remoteProbeSource": "cache"
   },
   "enabledFeatures": {
     "autoOptimizer": false
   },
   "costTracking": "minimal",
   "confidence": 0.72,
-  "detectedAt": "2026-10-09T19:14:02.397Z",
-  "appliedAt": "2026-10-09T19:14:02.397Z",
-  "rationale": "Git analysis: 88 tracked files, 1 branch (1 local, 1 remote), 50 commits (0 last 30d), 0 authors (30d), none activity, 38d old. Remote git (https://github.com/abdul-ahad-butt/nextgendial-Dailer): 1 remote branch, 0 remote authors (30d), via cache. Solo, low-intensity product — branch profiles with token-saving focus."
+  "detectedAt": "2026-10-09T19:14:03.915Z",
+  "appliedAt": "2026-10-09T19:14:45.044Z",
+  "userPlan": "accept-detected",
+  "rationale": "Git analysis: 277 tracked files, 1 branch (1 local, 1 remote), 57 commits (7 last 30d), 1 author (30d), low activity, ~1 KB git objects. Remote git (https://github.com/abdul-ahad-butt/nextgendial-Dailer): 1 remote branch, 1 remote author (30d), via remote-tracking. Solo, low-intensity product — branch profiles with token-saving focus."
 }

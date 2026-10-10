@@ -105,7 +105,7 @@ export const api = {
 
   admin: {
     getAgents: () =>
-      request<{ data: any[] }>('/admin/agents').then((r) => r.data),
+      request<any>('/admin/agents').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
 
     deleteAgent: (id: string) =>
       request<{ success: boolean; deleted_agent_id: string }>(`/admin/agents/${id}`, {
@@ -118,17 +118,17 @@ export const api = {
       }),
 
     getAgentStatus: () =>
-      request<{ data: any[] }>('/admin/agent-status').then((r) => r.data),
+      request<any>('/admin/agent-status').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
 
     getWorkSummary: () =>
-      request<{ data: any[] }>('/admin/agents/work-summary').then((r) => r.data),
+      request<any>('/admin/agents/work-summary').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
 
     getCallRecordings: (agentId?: string, date?: string) => {
       const qs = new URLSearchParams();
       if (agentId) qs.set('agent_id', agentId);
       if (date) qs.set('date', date);
       const query = qs.toString();
-      return request<{ data: any[] }>(`/admin/call-recordings${query ? `?${query}` : ''}`).then((r) => r.data);
+      return request<any>(`/admin/call-recordings${query ? `?${query}` : ''}`).then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : []));
     },
 
     createAgent: (data: { username: string; password: string }) =>
@@ -144,7 +144,7 @@ export const api = {
       }),
 
     getBatches: () =>
-      request<{ data: any[] }>('/admin/leads/batches').then((r) => r.data),
+      request<any>('/admin/leads/batches').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
 
     deleteBatch: (id: string) =>
       request<{ deleted_batch_id: string }>(`/admin/leads/batch/${id}`, {
@@ -157,7 +157,7 @@ export const api = {
       }),
       
     getLeads: (batchId?: string) =>
-      request<{ data: any[] }>(`/admin/leads${batchId ? `?batch_id=${batchId}` : ''}`).then((r) => r.data),
+      request<any>(`/admin/leads${batchId ? `?batch_id=${batchId}` : ''}`).then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
 
     assignLead: (lead_id: string, user_id: string | null) =>
       request<{ success: boolean }>('/admin/leads/assign', {
@@ -178,7 +178,7 @@ export const api = {
       }),
 
     getNumbers: () =>
-      request<{ data: any[] }>('/admin/numbers').then((r) => r.data),
+      request<any>('/admin/numbers').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
 
     assignNumber: (phone_id: string, user_id: string | null) =>
       request<{ success: boolean }>('/admin/numbers/assign', {
@@ -187,7 +187,10 @@ export const api = {
       }),
 
     getTenant: () =>
-      request<{ data: any }>('/admin/tenant').then((r) => r.data),
+      request<any>('/admin/tenant').then((r) => r?.data || r || {}),
+
+    getDashboard: () =>
+      request<any>('/admin/dashboard').then((r) => r?.data || r || {}),
   },
 
   // ── Campaigns ────────────────────────────────────────────

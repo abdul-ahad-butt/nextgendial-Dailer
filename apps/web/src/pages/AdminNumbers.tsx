@@ -41,7 +41,7 @@ export function AdminNumbers() {
 
   const agentOptions = [
     { value: 'unassign', label: '— Unassigned —' },
-    ...agents.map((ag) => ({ value: ag.id, label: ag.username })),
+    ...(agents || []).map((ag) => ({ value: ag?.id || '', label: ag?.username || ag?.name || 'Agent' })),
   ];
 
   if (loading) {
@@ -68,8 +68,8 @@ export function AdminNumbers() {
         </div>
       )}
 
-      <GlassCard title="Allocated DID Lines" subtitle={`${numbers.length} numbers available`}>
-        {numbers.length === 0 ? (
+      <GlassCard title="Allocated DID Lines" subtitle={`${(numbers || []).length} numbers available`}>
+        {(numbers || []).length === 0 ? (
           <div className="py-12 text-center text-slate-500">
             <div className="w-12 h-12 rounded-2xl bg-slate-800/60 flex items-center justify-center text-xl mx-auto mb-2">
               📱
@@ -91,24 +91,24 @@ export function AdminNumbers() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60">
-                {numbers.map((num) => (
-                  <tr key={num.id} className="hover:bg-slate-800/20 transition-colors">
+                {(numbers || []).map((num) => (
+                  <tr key={num?.id || num?.phone_number || Math.random()} className="hover:bg-slate-800/20 transition-colors">
                     <td className="py-3 px-4 font-mono font-medium text-slate-200">
-                      {formatE164(num.phone_number)}
+                      {formatE164(num?.phone_number || '')}
                     </td>
                     <td className="py-3 px-4 text-slate-400">
-                      {num.friendly_name || 'Primary Line'}
+                      {num?.friendly_name || num?.name || 'Primary Line'}
                     </td>
                     <td className="py-3 px-4">
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                        {num.status || 'Active'}
+                        {num?.status || 'Active'}
                       </span>
                     </td>
                     <td className="py-3 px-4">
                       <CustomSelect
-                        value={num.assigned_to_user_id || 'unassign'}
-                        onChange={(val) => handleAssign(num.id, val)}
+                        value={num?.assigned_to_user_id || 'unassign'}
+                        onChange={(val) => handleAssign(num?.id || num?.phone_number, val)}
                         options={agentOptions}
                         placeholder="Select agent..."
                       />

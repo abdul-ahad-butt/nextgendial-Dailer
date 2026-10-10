@@ -105,45 +105,45 @@ export function AdminAgentStatus() {
                 </tr>
               </thead>
               <tbody>
-                {workSummary.map(a => {
-                  const status = a.status || 'offline';
+                {(workSummary || []).map(a => {
+                  const status = a?.status || 'offline';
                   
                   return (
-                    <tr key={a.agent_id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <tr key={a?.agent_id || a?.id || Math.random()} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={{ padding: '12px 16px' }}>
-                        <div style={{ fontWeight: 600 }}>{a.username}</div>
+                        <div style={{ fontWeight: 600 }}>{a?.username || a?.name || 'Agent'}</div>
                         <div className="text-muted text-sm" style={{ fontFamily: 'var(--font-mono)' }}>
-                          ID: {a.agent_id.slice(0, 8).toUpperCase()}
+                          ID: {a?.agent_id ? a.agent_id.slice(0, 8).toUpperCase() : 'N/A'}
                         </div>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
                         <div className={`agent-status-badge agent-status-badge--${status}`} style={{ fontSize: 12, padding: '2px 8px', display: 'inline-flex' }}>
                           <span className={`status-dot status-dot--${status}`} />
-                          {status.replace('_', ' ').toUpperCase()}
+                          {String(status).replace('_', ' ').toUpperCase()}
                         </div>
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        {a.live_call_destination ? (
+                        {a?.live_call_destination ? (
                           <div>
                             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--text)' }}>
                               {a.live_call_destination}
                             </div>
                             <div className="text-muted text-xs">
-                              {a.live_call_duration !== null ? `${a.live_call_duration}s` : 'Connecting...'}
+                              {a.live_call_duration !== null && a.live_call_duration !== undefined ? `${a.live_call_duration}s` : 'Connecting...'}
                             </div>
                           </div>
                         ) : (
                           <span className="text-muted text-sm">-</span>
                         )}
                       </td>
-                      <td style={{ padding: '12px 16px' }}>{a.total_calls_made}</td>
+                      <td style={{ padding: '12px 16px' }}>{a?.total_calls_made || 0}</td>
                       <td style={{ padding: '12px 16px' }}>
-                        {Math.floor(a.total_talk_time_seconds / 60)}m {a.total_talk_time_seconds % 60}s
+                        {Math.floor((a?.total_talk_time_seconds || 0) / 60)}m {(a?.total_talk_time_seconds || 0) % 60}s
                       </td>
                       <td style={{ padding: '12px 16px' }}>
-                        <span style={{ color: 'var(--success)' }}>{Math.floor(a.total_active_seconds / 60)}m</span>
+                        <span style={{ color: 'var(--success)' }}>{Math.floor((a?.total_active_seconds || 0) / 60)}m</span>
                         <span className="text-muted mx-1" style={{ margin: '0 4px' }}>/</span>
-                        <span style={{ color: 'var(--warning)' }}>{Math.floor(a.total_break_seconds / 60)}m</span>
+                        <span style={{ color: 'var(--warning)' }}>{Math.floor((a?.total_break_seconds || 0) / 60)}m</span>
                       </td>
                     </tr>
                   );

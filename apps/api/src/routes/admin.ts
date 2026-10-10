@@ -55,7 +55,7 @@ admin.get('/tenant', async (c) => {
 
   // Fetch assigned numbers
   const { results: numbers } = await c.env.DB.prepare(`
-    SELECT phone_number, friendly_name, assigned_agent_id
+    SELECT phone_number as id, phone_number, friendly_name, assigned_agent_id
     FROM phone_inventory
     WHERE assigned_tenant_id = ?
   `).bind(tenantId).all();
@@ -65,16 +65,155 @@ admin.get('/tenant', async (c) => {
     SELECT max_agents, is_active FROM tenants WHERE id = ?
   `).bind(tenantId).first<{ max_agents: number; is_active: number }>();
 
+  // Fetch agent count
+  const agentsCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as cnt FROM users 
+    WHERE tenant_id = ? AND role = 'agent' AND COALESCE(status, 'offline') != 'deleted'
+  `).bind(tenantId).first<{ cnt: number }>();
+
+  // Fetch calls count
+  const callsCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as cnt FROM call_logs WHERE tenant_id = ?
+  `).bind(tenantId).first<{ cnt: number }>();
+
+  const tenantObj = {
+    id: tenantId,
+    name: balance?.name || 'Admin Organization',
+    allocated_credits: balance?.allocated_credits ?? 0,
+    spent_credits: balance?.spent_credits ?? 0,
+    remaining_balance: balance?.remaining_balance ?? 0,
+    remaining_credits: balance?.remaining_balance ?? 0,
+    max_agents: tenantRow?.max_agents ?? 5,
+    is_active: Boolean(tenantRow?.is_active ?? 1),
+    assigned_numbers: numbers || [],
+  };
+
+  const statsObj = {
+    agents_count: agentsCount?.cnt ?? 0,
+    total_calls: callsCount?.cnt ?? 0,
+  };
+
   return c.json({
     data: {
-      id: tenantId,
-      name: balance?.name || 'Organization',
+      ...tenantObj,
+      tenant: tenantObj,
+      stats: statsObj,
+    },
+    tenant: tenantObj,
+    stats: statsObj,
+  });
+});
+
+// ----------------------------------------------------------------
+// GET /admin/dashboard — Consolidated Dashboard Overview
+// ----------------------------------------------------------------
+admin.get('/dashboard', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const balance = await getTenantBalance(c.env.DB, tenantId);
+
+  // Fetch assigned numbers
+  const { results: numbers } = await c.env.DB.prepare(`
+    SELECT 
+      pi.phone_number as id,
+      pi.phone_number, 
+      pi.friendly_name, 
+      pi.assigned_agent_id
+    FROM phone_inventory pi
+    WHERE pi.assigned_tenant_id = ?
+  `).bind(tenantId).all();
+
+  // Fetch tenant info
+  const tenantRow = await c.env.DB.prepare(`
+    SELECT max_agents, is_active FROM tenants WHERE id = ?
+  `).bind(tenantId).first<{ max_agents: number; is_active: number }>();
+
+  // Fetch agents
+  const { results: agentsList } = await c.env.DB.prepare(`
+    SELECT id, username, role, tenant_id, created_at, status
+    FROM users 
+    WHERE role = 'agent' AND tenant_id = ? AND COALESCE(status, 'offline') != 'deleted'
+    ORDER BY created_at DESC
+  `).bind(tenantId).all();
+
+  // Fetch calls count
+  const callsCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as cnt FROM call_logs WHERE tenant_id = ?
+  `).bind(tenantId).first<{ cnt: number }>();
+
+  const tenantObj = {
+    id: tenantId,
+    name: balance?.name || 'Admin Organization',
+    allocated_credits: balance?.allocated_credits ?? 0,
+    spent_credits: balance?.spent_credits ?? 0,
+    remaining_balance: balance?.remaining_balance ?? 0,
+    remaining_credits: balance?.remaining_balance ?? 0,
+    max_agents: tenantRow?.max_agents ?? 5,
+    is_active: Boolean(tenantRow?.is_active ?? 1),
+  };
+
+  const statsObj = {
+    agents_count: (agentsList || []).length,
+    total_calls: callsCount?.cnt ?? 0,
+  };
+
+  const agentsSafe = (agentsList || []).map((a: any) => ({
+    ...a,
+    name: a.username || 'Agent',
+  }));
+
+  const phoneNumbersSafe = (numbers || []).map((n: any) => ({
+    ...n,
+    name: n.friendly_name || n.phone_number,
+  }));
+
+  return c.json({
+    tenant: tenantObj,
+    admin: {
+      name: balance?.name || 'Admin Organization',
       allocated_credits: balance?.allocated_credits ?? 0,
-      spent_credits: balance?.spent_credits ?? 0,
-      remaining_balance: balance?.remaining_balance ?? 0,
-      max_agents: tenantRow?.max_agents ?? 5,
-      is_active: Boolean(tenantRow?.is_active ?? 1),
-      assigned_numbers: numbers || [],
+    },
+    stats: statsObj,
+    agents: agentsSafe,
+    phone_numbers: phoneNumbersSafe,
+    data: {
+      tenant: tenantObj,
+      stats: statsObj,
+      agents: agentsSafe,
+      phone_numbers: phoneNumbersSafe,
+    },
+  });
+});
+
+// ----------------------------------------------------------------
+// GET /admin/me — Admin Profile & Tenant Context
+// ----------------------------------------------------------------
+admin.get('/me', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const balance = await getTenantBalance(c.env.DB, tenantId);
+  const userId = c.get('userId');
+  const user = await c.env.DB.prepare('SELECT id, username, role FROM users WHERE id = ?')
+    .bind(userId).first<{ id: string; username: string; role: string }>();
+
+  const tenantObj = {
+    id: tenantId,
+    name: balance?.name || 'Admin Organization',
+    allocated_credits: balance?.allocated_credits ?? 0,
+    spent_credits: balance?.spent_credits ?? 0,
+    remaining_credits: balance?.remaining_balance ?? 0,
+  };
+
+  return c.json({
+    data: {
+      id: userId,
+      name: user?.username || 'Administrator',
+      username: user?.username || 'admin',
+      role: user?.role || 'admin',
+      tenant: tenantObj,
+    },
+    tenant: tenantObj,
+    admin: {
+      id: userId,
+      name: user?.username || 'Administrator',
     },
   });
 });
@@ -316,6 +455,28 @@ admin.get('/phone-numbers', async (c) => {
 
   const { results } = await c.env.DB.prepare(`
     SELECT 
+      pi.phone_number as id,
+      pi.phone_number,
+      pi.friendly_name,
+      pi.status,
+      pi.assigned_agent_id as assigned_to_user_id,
+      u.username as assigned_agent_username
+    FROM phone_inventory pi
+    LEFT JOIN users u ON pi.assigned_agent_id = u.id
+    WHERE pi.assigned_tenant_id = ?
+    ORDER BY pi.created_at DESC
+  `).bind(tenantId).all();
+
+  return c.json({ data: results || [] });
+});
+
+// Alias for compatibility with frontend api.admin.getNumbers()
+admin.get('/numbers', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+
+  const { results } = await c.env.DB.prepare(`
+    SELECT 
+      pi.phone_number as id,
       pi.phone_number,
       pi.friendly_name,
       pi.status,

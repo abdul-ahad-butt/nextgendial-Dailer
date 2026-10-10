@@ -243,39 +243,39 @@ export function AdminLeads() {
                 </tr>
               </thead>
               <tbody>
-                {leads.map(lead => (
-                  <tr key={lead.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                {(leads || []).map(lead => (
+                  <tr key={lead?.id || Math.random()} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={{ padding: '12px 8px' }}>
                       <input 
                         type="checkbox" 
-                        checked={selectedLeadIds.has(lead.id)}
-                        onChange={() => toggleSelection(lead.id)}
+                        checked={Boolean(lead?.id && selectedLeadIds.has(lead.id))}
+                        onChange={() => lead?.id && toggleSelection(lead.id)}
                       />
                     </td>
                     <td style={{ padding: '12px 8px', fontWeight: 500 }}>
-                      {lead.first_name || lead.last_name ? `${lead.first_name || ''} ${lead.last_name || ''}`.trim() : 'Unknown'}
+                      {lead?.first_name || lead?.last_name ? `${lead?.first_name || ''} ${lead?.last_name || ''}`.trim() : 'Unknown'}
                     </td>
                     <td style={{ padding: '12px 8px', fontFamily: 'monospace' }}>
-                      {lead.phone_number}
+                      {lead?.phone_number || 'N/A'}
                     </td>
                     <td style={{ padding: '12px 8px' }}>
-                      <span className={`pill-chip pill-chip--${lead.status}`}>
-                        {lead.status}
+                      <span className={`pill-chip pill-chip--${lead?.status || 'pending'}`}>
+                        {lead?.status || 'pending'}
                       </span>
                     </td>
                     <td style={{ padding: '12px 8px', color: 'var(--text-muted)' }}>
-                      {lead.batch_name || 'N/A'}
+                      {lead?.batch_name || 'N/A'}
                     </td>
                     <td style={{ padding: '12px 8px' }}>
                       <select 
                         className="input" 
                         style={{ padding: '4px 8px', fontSize: 12, height: 'auto', minWidth: 120 }}
-                        value={lead.assigned_user_id || ''}
-                        onChange={(e) => handleSingleAssign(lead.id, e.target.value)}
+                        value={lead?.assigned_user_id || ''}
+                        onChange={(e) => lead?.id && handleSingleAssign(lead.id, e.target.value)}
                       >
                         <option value="">General Pool</option>
-                        {agents.map(a => (
-                          <option key={a.id} value={a.id}>{a.username}</option>
+                        {(agents || []).map(a => (
+                          <option key={a?.id} value={a?.id}>{a?.username || 'Agent'}</option>
                         ))}
                       </select>
                     </td>
@@ -283,7 +283,7 @@ export function AdminLeads() {
                       <button 
                         className="btn btn-ghost" 
                         style={{ color: 'var(--danger)', padding: '4px 8px', fontSize: 12 }}
-                        onClick={() => handleDeleteLead(lead.id)}
+                        onClick={() => lead?.id && handleDeleteLead(lead.id)}
                       >
                         Delete
                       </button>
