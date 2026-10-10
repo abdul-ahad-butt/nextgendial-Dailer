@@ -264,7 +264,9 @@ superAdmin.get('/tenants', async (c) => {
 
   const enriched = (tenants || []).map((t: any) => ({
     ...t,
+    available_credits: Number(t.available_credits ?? Math.max(0, (t.allocated_credits ?? 0) - (t.spent_credits ?? 0) - (t.distributed_credits ?? 0))),
     allocated_credits: Number(t.allocated_credits ?? 0),
+    distributed_credits: Number(t.distributed_credits ?? 0),
     spent_credits: Number(t.spent_credits ?? 0),
     remaining_balance: Math.round(((t.allocated_credits ?? 0) - (t.spent_credits ?? 0)) * 100) / 100,
     assigned_numbers: numbersByTenant[t.id] || [],
@@ -391,6 +393,24 @@ const creditGrantSchema = z.object({
 });
 
 superAdmin.post('/tenants/:id/credits', zValidator('json', creditGrantSchema), async (c) => {
+  const tenantId = c.req.param('id');
+  const { amount, notes } = c.req.valid('json');
+
+  const result = await grantTenantCredits(c.env.DB, {
+    tenantId,
+    amount,
+    referenceId: notes || 'SUPER_ADMIN_REFILL',
+  });
+
+  return c.json({
+    success: true,
+    granted: result.granted,
+    remaining_balance: result.newBalance,
+  });
+});
+
+// Alias for /admins/:id/credits
+superAdmin.post('/admins/:id/credits', zValidator('json', creditGrantSchema), async (c) => {
   const tenantId = c.req.param('id');
   const { amount, notes } = c.req.valid('json');
 

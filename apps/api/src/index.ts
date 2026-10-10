@@ -140,13 +140,69 @@ async function ensureSchema(db: D1Database) {
     // Add agent credits and phone numbers columns
     try { await db.prepare('ALTER TABLE users ADD COLUMN allocated_credits REAL DEFAULT 0.00;').run(); } catch {}
     try { await db.prepare('ALTER TABLE users ADD COLUMN spent_credits REAL DEFAULT 0.00;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE users ADD COLUMN balance_credits REAL DEFAULT 0.00;').run(); } catch {}
     try { await db.prepare('ALTER TABLE users ADD COLUMN assigned_phone_number TEXT;').run(); } catch {}
     try { await db.prepare('ALTER TABLE agents ADD COLUMN allocated_credits REAL DEFAULT 0.00;').run(); } catch {}
     try { await db.prepare('ALTER TABLE agents ADD COLUMN spent_credits REAL DEFAULT 0.00;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE agents ADD COLUMN balance_credits REAL DEFAULT 0.00;').run(); } catch {}
     try { await db.prepare('ALTER TABLE agents ADD COLUMN assigned_phone_number TEXT;').run(); } catch {}
     try { await db.prepare('ALTER TABLE agents ADD COLUMN current_call_id TEXT;').run(); } catch {}
     try { await db.prepare('ALTER TABLE agents ADD COLUMN total_calls INTEGER DEFAULT 0;').run(); } catch {}
     try { await db.prepare('ALTER TABLE agents ADD COLUMN total_talk_time_seconds INTEGER DEFAULT 0;').run(); } catch {}
+
+    // Strict two-way credit ledger columns on tenants
+    try { await db.prepare('ALTER TABLE tenants ADD COLUMN available_credits REAL DEFAULT 0.00;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE tenants ADD COLUMN distributed_credits REAL DEFAULT 0.00;').run(); } catch {}
+
+    // Ensure credit_transfers audit table exists
+    try {
+      await db.prepare(`
+        CREATE TABLE IF NOT EXISTS credit_transfers (
+          id TEXT PRIMARY KEY,
+          from_type TEXT NOT NULL,
+          from_id TEXT NOT NULL,
+          to_type TEXT NOT NULL,
+          to_id TEXT NOT NULL,
+          amount REAL NOT NULL,
+          notes TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `).run();
+    } catch {}
+
+    // Sync initial balances if available_credits is uninitialized
+    try {
+      // 1. Set agent balance_credits
+      await db.prepare(`
+        UPDATE agents 
+        SET balance_credits = MAX(0.00, COALESCE(allocated_credits, 0.00) - COALESCE(spent_credits, 0.00))
+        WHERE balance_credits IS NULL OR balance_credits = 0.00
+      `).run();
+
+      await db.prepare(`
+        UPDATE users 
+        SET balance_credits = MAX(0.00, COALESCE(allocated_credits, 0.00) - COALESCE(spent_credits, 0.00))
+        WHERE role = 'agent' AND (balance_credits IS NULL OR balance_credits = 0.00)
+      `).run();
+
+      // 2. Sync tenant distributed_credits
+      await db.prepare(`
+        UPDATE tenants 
+        SET distributed_credits = COALESCE((
+          SELECT SUM(allocated_credits) 
+          FROM users 
+          WHERE users.tenant_id = tenants.id AND users.role = 'agent' AND COALESCE(users.status, 'offline') != 'deleted'
+        ), 0.00)
+        WHERE distributed_credits IS NULL OR distributed_credits = 0.00
+      `).run();
+
+      // 3. Set tenant available_credits
+      await db.prepare(`
+        UPDATE tenants 
+        SET available_credits = MAX(0.00, COALESCE(allocated_credits, 0.00) - COALESCE(spent_credits, 0.00) - COALESCE(distributed_credits, 0.00))
+        WHERE available_credits IS NULL OR available_credits = 0.00
+      `).run();
+    } catch {}
 
     // Ensure lead batches & recordings tables exist
     try {
@@ -256,6 +312,7 @@ app.get('/api/seed', async (c) => {
 // ----------------------------------------------------------------
 app.route('/api/auth', authRoute);
 app.route('/api/super', superAdminRoute);
+app.route('/api/superAdmin', superAdminRoute);
 app.route('/api/admin', adminRoute);
 app.route('/api/leads', leadsRoute);
 app.route('/api/agent', agentRoute);

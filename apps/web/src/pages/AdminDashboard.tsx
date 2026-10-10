@@ -8,8 +8,9 @@ import { CustomSelect } from '../components/common/CustomSelect';
 import { GlassCard } from '../components/common/GlassCard';
 import { ZeroCreditBanner } from '../components/common/ZeroCreditBanner';
 import { AssignAgentModal } from '../components/admin/AssignAgentModal';
+import { ReclaimCreditModal } from '../components/admin/ReclaimCreditModal';
 import { formatCurrency } from '../utils/formatters';
-import { Loader2, Coins } from 'lucide-react';
+import { Loader2, Coins, ArrowDownLeft } from 'lucide-react';
 
 interface User {
   id: string;
@@ -17,6 +18,7 @@ interface User {
   created_at: string;
   status?: string;
   name?: string;
+  balance_credits?: number;
   allocated_credits?: number;
   spent_credits?: number;
   assigned_phone_number?: string | null;
@@ -25,7 +27,9 @@ interface User {
 interface TenantDetails {
   id: string;
   name: string;
+  available_credits: number;
   allocated_credits: number;
+  distributed_credits: number;
   spent_credits: number;
   remaining_credits: number;
   max_agents: number;
@@ -82,8 +86,9 @@ export function AdminDashboard() {
   // Password Modal State
   const [passwordModal, setPasswordModal] = useState<{ username: string; password?: string; isReset?: boolean } | null>(null);
 
-  // Allocate Agent Modal State
+  // Allocate & Reclaim Agent Modal State
   const [allocatingAgent, setAllocatingAgent] = useState<User | null>(null);
+  const [reclaimingAgent, setReclaimingAgent] = useState<User | null>(null);
   const [phoneNumbers, setPhoneNumbers] = useState<any[]>([]);
 
   const fetchTenantData = async () => {
@@ -102,13 +107,22 @@ export function AdminDashboard() {
         const rawTenant = val?.tenant || val?.data?.tenant || val?.data || val;
         const rawStats = val?.stats || val?.data?.stats || val?.data || val;
 
+        const allocated = Number(rawTenant?.allocated_credits ?? val?.allocated_credits ?? 0);
+        const spent = Number(rawTenant?.spent_credits ?? val?.spent_credits ?? 0);
+        const distributed = Number(rawTenant?.distributed_credits ?? val?.distributed_credits ?? 0);
+        const available = rawTenant?.available_credits !== undefined && rawTenant?.available_credits !== null
+          ? Number(rawTenant.available_credits)
+          : Math.max(0, Math.round((allocated - spent - distributed) * 1000) / 1000);
+
         setTenantInfo({
           tenant: {
             id: rawTenant?.id || val?.id || '',
             name: rawTenant?.name || val?.name || 'Admin Organization',
-            allocated_credits: Number(rawTenant?.allocated_credits ?? val?.allocated_credits ?? 0),
-            spent_credits: Number(rawTenant?.spent_credits ?? val?.spent_credits ?? 0),
-            remaining_credits: Number(rawTenant?.remaining_credits ?? rawTenant?.remaining_balance ?? val?.remaining_balance ?? val?.remaining_credits ?? 0),
+            available_credits: available,
+            allocated_credits: allocated,
+            distributed_credits: distributed,
+            spent_credits: spent,
+            remaining_credits: available,
             max_agents: Number(rawTenant?.max_agents ?? val?.max_agents ?? 5),
             is_active: rawTenant?.is_active ?? val?.is_active ?? 1,
           },
@@ -428,15 +442,18 @@ export function AdminDashboard() {
           {/* Organization Credits & Quota Vitals Banner */}
           {tenantInfo && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 animate-fade-in">
-              <GlassCard title="Prepaid Balance" subtitle="Calling & SMS Credits">
+              <GlassCard title="Available Balance" subtitle="Unassigned calling pool">
                 <div className="text-2xl font-bold font-mono text-emerald-400">
-                  {formatCurrency(tenantInfo?.tenant?.remaining_credits ?? 0)}
+                  {formatCurrency(tenantInfo?.tenant?.available_credits ?? 0)}
                 </div>
-                <div className="text-xs text-slate-400 mt-1 flex items-center justify-between">
-                  <span>Allocated: {formatCurrency(tenantInfo?.tenant?.allocated_credits ?? 0)}</span>
-                  <span>Spent: {formatCurrency(tenantInfo?.tenant?.spent_credits ?? 0)}</span>
+                <div className="flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/60 pt-2 font-mono mt-2">
+                  <span>Total Granted: {formatCurrency(tenantInfo?.tenant?.allocated_credits ?? 0)}</span>
+                  <span className="text-cyan-400">Assigned: {formatCurrency(tenantInfo?.tenant?.distributed_credits ?? 0)}</span>
                 </div>
-                {(tenantInfo?.tenant?.remaining_credits ?? 0) < 0.05 && (
+                <div className="flex items-center justify-between text-[10px] text-slate-500 font-mono mt-1">
+                  <span>Total Spent: {formatCurrency(tenantInfo?.tenant?.spent_credits ?? 0)}</span>
+                </div>
+                {(tenantInfo?.tenant?.available_credits ?? 0) < 0.05 && (
                   <div className="mt-2 text-[11px] text-rose-400 font-semibold bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/20">
                     Depleted: Outbound calls locked out
                   </div>
@@ -537,7 +554,7 @@ export function AdminDashboard() {
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
                         {(agents || []).map(a => {
-                          const budget = Math.max(0, (a?.allocated_credits ?? 0) - (a?.spent_credits ?? 0));
+                          const budget = Number(a?.balance_credits ?? Math.max(0, (a?.allocated_credits ?? 0) - (a?.spent_credits ?? 0)));
                           return (
                             <tr key={a?.id || Math.random()} className="hover:bg-slate-800/30 transition-colors">
                               <td className="py-3 px-3">
@@ -564,6 +581,15 @@ export function AdminDashboard() {
                                   >
                                     <Coins className="w-3 h-3" />
                                     <span>Allocate</span>
+                                  </button>
+                                  <button
+                                    onClick={() => setReclaimingAgent(a)}
+                                    disabled={budget <= 0}
+                                    className="px-2.5 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-slate-800 text-slate-300 rounded-lg border border-slate-700/60 transition-all flex items-center gap-1"
+                                    title="Reclaim unused budget from agent"
+                                  >
+                                    <ArrowDownLeft className="w-3 h-3" />
+                                    <span>Reclaim</span>
                                   </button>
                                   <button
                                     onClick={() => handleResetPassword(a?.id || '', a?.username || a?.name || '')}
@@ -714,9 +740,22 @@ export function AdminDashboard() {
       {allocatingAgent && (
         <AssignAgentModal
           agent={allocatingAgent}
-          organizationAvailableBalance={tenantInfo?.tenant?.remaining_credits ?? 0}
+          organizationAvailableBalance={tenantInfo?.tenant?.available_credits ?? 0}
           availablePhoneNumbers={phoneNumbers}
           onClose={() => setAllocatingAgent(null)}
+          onSuccess={() => {
+            fetchTenantData();
+            fetchAgents();
+          }}
+        />
+      )}
+
+      {/* Reclaim Agent Modal */}
+      {reclaimingAgent && (
+        <ReclaimCreditModal
+          agent={reclaimingAgent}
+          organizationAvailableBalance={tenantInfo?.tenant?.available_credits ?? 0}
+          onClose={() => setReclaimingAgent(null)}
           onSuccess={() => {
             fetchTenantData();
             fetchAgents();

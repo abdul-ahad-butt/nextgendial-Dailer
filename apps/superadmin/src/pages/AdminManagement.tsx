@@ -165,8 +165,8 @@ export const AdminManagement: React.FC = () => {
               <tr>
                 <th>Organization</th>
                 <th>Admin Username</th>
-                <th>Prepaid Balance</th>
-                <th>Allocated / Spent</th>
+                <th>Available Pool</th>
+                <th>Granted / Spent</th>
                 <th>Agents Limit</th>
                 <th>Assigned Lines</th>
                 <th>Status</th>
@@ -188,8 +188,8 @@ export const AdminManagement: React.FC = () => {
                 </tr>
               ) : (
                 filteredTenants.map((t) => {
-                  const remaining = Math.max(0, (t.allocated_credits || 0) - (t.spent_credits || 0));
-                  const isDepleted = remaining < 0.05;
+                  const available = Number(t.available_credits ?? Math.max(0, (t.allocated_credits || 0) - (t.spent_credits || 0) - (t.distributed_credits || 0)));
+                  const isDepleted = available < 0.05;
 
                   return (
                     <tr key={t.id}>
@@ -203,13 +203,16 @@ export const AdminManagement: React.FC = () => {
                       <td>
                         <div className="flex items-center gap-2">
                           <span className={`font-mono font-bold text-sm ${isDepleted ? 'text-rose-400' : 'text-emerald-400'}`}>
-                            {formatCurrency(remaining)}
+                            {formatCurrency(available)}
                           </span>
                           {isDepleted ? (
-                            <span className="badge badge-danger">LOCKED</span>
+                            <span className="badge badge-danger">DEPLETED</span>
                           ) : (
                             <span className="badge badge-success">OK</span>
                           )}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-mono mt-0.5">
+                          Assigned: {formatCurrency(t.distributed_credits || 0)}
                         </div>
                       </td>
                       <td className="text-xs text-slate-400 font-mono">

@@ -130,6 +130,7 @@ admin.get('/dashboard', async (c) => {
   // Fetch agents
   const { results: agentsList } = await c.env.DB.prepare(`
     SELECT id, username, role, tenant_id, created_at, status,
+           COALESCE(balance_credits, MAX(0.00, COALESCE(allocated_credits, 0.00) - COALESCE(spent_credits, 0.00))) AS balance_credits,
            COALESCE(allocated_credits, 0.00) AS allocated_credits,
            COALESCE(spent_credits, 0.00) AS spent_credits,
            assigned_phone_number
@@ -146,10 +147,12 @@ admin.get('/dashboard', async (c) => {
   const tenantObj = {
     id: tenantId,
     name: balance?.name || 'Admin Organization',
+    available_credits: balance?.available_credits ?? 0,
     allocated_credits: balance?.allocated_credits ?? 0,
+    distributed_credits: balance?.distributed_credits ?? 0,
     spent_credits: balance?.spent_credits ?? 0,
-    remaining_balance: balance?.remaining_balance ?? 0,
-    remaining_credits: balance?.remaining_balance ?? 0,
+    remaining_balance: balance?.available_credits ?? 0,
+    remaining_credits: balance?.available_credits ?? 0,
     max_agents: tenantRow?.max_agents ?? 5,
     is_active: Boolean(tenantRow?.is_active ?? 1),
   };
@@ -162,6 +165,7 @@ admin.get('/dashboard', async (c) => {
   const agentsSafe = (agentsList || []).map((a: any) => ({
     ...a,
     name: a.username || 'Agent',
+    balance_credits: Number(a.balance_credits ?? Math.max(0, (a.allocated_credits || 0) - (a.spent_credits || 0))),
     allocated_credits: Number(a.allocated_credits ?? 0),
     spent_credits: Number(a.spent_credits ?? 0),
     assigned_phone_number: a.assigned_phone_number || null,
@@ -176,6 +180,7 @@ admin.get('/dashboard', async (c) => {
     tenant: tenantObj,
     admin: {
       name: balance?.name || 'Admin Organization',
+      available_credits: balance?.available_credits ?? 0,
       allocated_credits: balance?.allocated_credits ?? 0,
     },
     stats: statsObj,
@@ -186,6 +191,51 @@ admin.get('/dashboard', async (c) => {
       stats: statsObj,
       agents: agentsSafe,
       phone_numbers: phoneNumbersSafe,
+    },
+  });
+});
+
+// Alias for /tenant (matches api.admin.getTenant())
+admin.get('/tenant', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const balance = await getTenantBalance(c.env.DB, tenantId);
+
+  const tenantRow = await c.env.DB.prepare(`
+    SELECT max_agents, is_active FROM tenants WHERE id = ?
+  `).bind(tenantId).first<{ max_agents: number; is_active: number }>();
+
+  const callsCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as cnt FROM call_logs WHERE tenant_id = ?
+  `).bind(tenantId).first<{ cnt: number }>();
+
+  const agentsCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as cnt FROM users WHERE role = 'agent' AND tenant_id = ? AND COALESCE(status, 'offline') != 'deleted'
+  `).bind(tenantId).first<{ cnt: number }>();
+
+  const tenantObj = {
+    id: tenantId,
+    name: balance?.name || 'Admin Organization',
+    available_credits: balance?.available_credits ?? 0,
+    allocated_credits: balance?.allocated_credits ?? 0,
+    distributed_credits: balance?.distributed_credits ?? 0,
+    spent_credits: balance?.spent_credits ?? 0,
+    remaining_balance: balance?.available_credits ?? 0,
+    remaining_credits: balance?.available_credits ?? 0,
+    max_agents: tenantRow?.max_agents ?? 5,
+    is_active: Boolean(tenantRow?.is_active ?? 1),
+  };
+
+  const statsObj = {
+    agents_count: agentsCount?.cnt ?? 0,
+    total_calls: callsCount?.cnt ?? 0,
+  };
+
+  return c.json({
+    tenant: tenantObj,
+    stats: statsObj,
+    data: {
+      tenant: tenantObj,
+      stats: statsObj,
     },
   });
 });
@@ -318,6 +368,7 @@ admin.get('/agents', async (c) => {
   const tenantId = await getEffectiveTenantId(c);
   const { results } = await c.env.DB.prepare(`
     SELECT id, username, role, tenant_id, created_at, status,
+           COALESCE(balance_credits, MAX(0.00, COALESCE(allocated_credits, 0.00) - COALESCE(spent_credits, 0.00))) AS balance_credits,
            COALESCE(allocated_credits, 0.00) AS allocated_credits,
            COALESCE(spent_credits, 0.00) AS spent_credits,
            assigned_phone_number
@@ -329,6 +380,7 @@ admin.get('/agents', async (c) => {
   const formatted = (results || []).map((a: any) => ({
     ...a,
     name: a.username || 'Agent',
+    balance_credits: Number(a.balance_credits ?? Math.max(0, (a.allocated_credits || 0) - (a.spent_credits || 0))),
     allocated_credits: Number(a.allocated_credits ?? 0),
     spent_credits: Number(a.spent_credits ?? 0),
   }));
@@ -388,27 +440,37 @@ admin.post('/agents/:id/allocate', async (c) => {
     body = await c.req.json();
   } catch {}
 
-  const creditAmount = Number(body.credits ?? 0);
+  const transferAmount = parseFloat(body.credits ?? body.amount ?? 0);
   const phoneNumber = body.phoneNumber ? String(body.phoneNumber).trim() : null;
 
-  if (creditAmount < 0) {
-    return c.json({ error: 'Credit amount cannot be negative' }, 400);
+  if (isNaN(transferAmount) || transferAmount <= 0) {
+    if (phoneNumber && transferAmount === 0) {
+      await c.env.DB.batch([
+        c.env.DB.prepare('UPDATE users SET assigned_phone_number = ? WHERE id = ? AND tenant_id = ?').bind(phoneNumber, agentId, tenantId),
+        c.env.DB.prepare('UPDATE agents SET assigned_phone_number = ? WHERE id = ?').bind(phoneNumber, agentId),
+        c.env.DB.prepare('UPDATE phone_inventory SET assigned_agent_id = ? WHERE (phone_number = ? OR friendly_name = ?) AND assigned_tenant_id = ?').bind(agentId, phoneNumber, phoneNumber, tenantId),
+      ]);
+      return c.json({ success: true, message: 'Agent line updated successfully', transferred: 0, assigned_phone_number: phoneNumber });
+    }
+    return c.json({ error: 'Transfer amount must be greater than $0.00' }, 400);
   }
 
   // Validate tenant has enough available credits
   const tenant = await c.env.DB.prepare(
-    `SELECT allocated_credits, spent_credits FROM tenants WHERE id = ?`
-  ).bind(tenantId).first<{ allocated_credits: number; spent_credits: number }>();
+    `SELECT id, available_credits, allocated_credits, spent_credits, distributed_credits FROM tenants WHERE id = ?`
+  ).bind(tenantId).first<{ id: string; available_credits: number; allocated_credits: number; spent_credits: number; distributed_credits: number }>();
 
   if (!tenant) {
     return c.json({ error: 'Tenant organization not found' }, 404);
   }
 
-  const available = (tenant.allocated_credits || 0) - (tenant.spent_credits || 0);
+  const available = tenant.available_credits !== undefined && tenant.available_credits !== null
+    ? Number(tenant.available_credits)
+    : Math.max(0, Math.round(((tenant.allocated_credits || 0) - (tenant.spent_credits || 0) - (tenant.distributed_credits || 0)) * 1000) / 1000);
 
-  if (creditAmount > available) {
+  if (transferAmount > available) {
     return c.json({
-      error: `Insufficient organization credit to allocate. Available: $${available.toFixed(2)}, Requested: $${creditAmount.toFixed(2)}`
+      error: `Insufficient available balance. You have $${available.toFixed(2)} available.`
     }, 400);
   }
 
@@ -421,29 +483,49 @@ admin.post('/agents/:id/allocate', async (c) => {
     return c.json({ error: 'Agent not found in your organization' }, 404);
   }
 
-  const batchStmts = [];
+  const transferId = crypto.randomUUID();
+  const ledgerId = crypto.randomUUID();
+  const newAvailable = Math.round((available - transferAmount) * 1000) / 1000;
 
-  // Update users table
-  batchStmts.push(
+  const batchStmts = [
+    // A. Deduct from Admin available balance, increase distributed counter
+    c.env.DB.prepare(`
+      UPDATE tenants 
+      SET available_credits = MAX(0.00, available_credits - ?),
+          distributed_credits = distributed_credits + ?
+      WHERE id = ? AND available_credits >= ?
+    `).bind(transferAmount, transferAmount, tenantId, transferAmount),
+
+    // B. Add to Agent spendable balance & allocated total
     c.env.DB.prepare(`
       UPDATE users 
-      SET allocated_credits = COALESCE(allocated_credits, 0) + ?,
+      SET balance_credits = COALESCE(balance_credits, 0) + ?,
+          allocated_credits = COALESCE(allocated_credits, 0) + ?,
           assigned_phone_number = COALESCE(?, assigned_phone_number)
       WHERE id = ? AND tenant_id = ?
-    `).bind(creditAmount, phoneNumber || null, agentId, tenantId)
-  );
+    `).bind(transferAmount, transferAmount, phoneNumber || null, agentId, tenantId),
 
-  // Update agents table if exists
-  batchStmts.push(
     c.env.DB.prepare(`
       UPDATE agents 
-      SET allocated_credits = COALESCE(allocated_credits, 0) + ?,
+      SET balance_credits = COALESCE(balance_credits, 0) + ?,
+          allocated_credits = COALESCE(allocated_credits, 0) + ?,
           assigned_phone_number = COALESCE(?, assigned_phone_number)
       WHERE id = ?
-    `).bind(creditAmount, phoneNumber || null, agentId)
-  );
+    `).bind(transferAmount, transferAmount, phoneNumber || null, agentId),
 
-  // If phone number provided, assign in phone_inventory
+    // C. Insert into transfer audit ledger
+    c.env.DB.prepare(`
+      INSERT INTO credit_transfers (id, from_type, from_id, to_type, to_id, amount, notes, created_at)
+      VALUES (?, 'TENANT', ?, 'AGENT', ?, ?, 'Admin credit transfer to agent', datetime('now'))
+    `).bind(transferId, tenantId, agentId, transferAmount),
+
+    // D. Insert into credit ledger
+    c.env.DB.prepare(`
+      INSERT INTO credit_ledger (id, tenant_id, amount, type, reference_id, balance_after, created_at)
+      VALUES (?, ?, ?, 'ADMIN_ALLOCATE_AGENT', ?, ?, datetime('now'))
+    `).bind(ledgerId, tenantId, -transferAmount, agentId, newAvailable)
+  ];
+
   if (phoneNumber) {
     batchStmts.push(
       c.env.DB.prepare(`
@@ -454,23 +536,89 @@ admin.post('/agents/:id/allocate', async (c) => {
     );
   }
 
-  // Record audit entry in credit_ledger if creditAmount > 0
-  if (creditAmount > 0) {
-    batchStmts.push(
-      c.env.DB.prepare(`
-        INSERT INTO credit_ledger (id, tenant_id, amount, type, reference_id, balance_after, created_at)
-        VALUES (?, ?, ?, 'ADMIN_ALLOCATE_AGENT', ?, ?, datetime('now'))
-      `).bind(crypto.randomUUID(), tenantId, creditAmount, agentId, available)
-    );
-  }
-
   await c.env.DB.batch(batchStmts);
 
   return c.json({
     success: true,
     message: 'Agent updated successfully',
-    allocated_credits: creditAmount,
+    transferred: transferAmount,
+    newAvailableBalance: newAvailable,
     assigned_phone_number: phoneNumber,
+  });
+});
+
+// 2. Reclaim Credit from Agent back to Admin (DEBIT Agent, CREDIT Admin)
+admin.post('/agents/:id/reclaim', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const agentId = c.req.param('id');
+  let body: any = {};
+  try {
+    body = await c.req.json();
+  } catch {}
+
+  const reclaimAmount = parseFloat(body.amount ?? body.credits ?? 0);
+
+  if (isNaN(reclaimAmount) || reclaimAmount <= 0) {
+    return c.json({ error: 'Reclaim amount must be greater than $0.00' }, 400);
+  }
+
+  const agent = await c.env.DB.prepare(
+    `SELECT id, username, balance_credits, allocated_credits, spent_credits FROM users WHERE id = ? AND tenant_id = ?`
+  ).bind(agentId, tenantId).first<{ id: string; username: string; balance_credits: number; allocated_credits: number; spent_credits: number }>();
+
+  if (!agent) {
+    return c.json({ error: 'Agent not found in your organization' }, 404);
+  }
+
+  const agentBalance = agent.balance_credits !== undefined && agent.balance_credits !== null
+    ? Number(agent.balance_credits)
+    : Math.max(0, Math.round(((agent.allocated_credits || 0) - (agent.spent_credits || 0)) * 1000) / 1000);
+
+  if (reclaimAmount > agentBalance) {
+    return c.json({ 
+      error: `Agent only has $${agentBalance.toFixed(2)} available to reclaim.` 
+    }, 400);
+  }
+
+  const transferId = crypto.randomUUID();
+  const ledgerId = crypto.randomUUID();
+
+  // ATOMIC BATCH: Deduct from Agent, Return to Admin Available Pool
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      UPDATE users 
+      SET balance_credits = MAX(0.00, balance_credits - ?)
+      WHERE id = ? AND tenant_id = ? AND balance_credits >= ?
+    `).bind(reclaimAmount, agentId, tenantId, reclaimAmount),
+
+    c.env.DB.prepare(`
+      UPDATE agents 
+      SET balance_credits = MAX(0.00, balance_credits - ?)
+      WHERE id = ? AND balance_credits >= ?
+    `).bind(reclaimAmount, agentId, reclaimAmount),
+
+    c.env.DB.prepare(`
+      UPDATE tenants 
+      SET available_credits = available_credits + ?,
+          distributed_credits = MAX(0.00, distributed_credits - ?)
+      WHERE id = ?
+    `).bind(reclaimAmount, reclaimAmount, tenantId),
+
+    c.env.DB.prepare(`
+      INSERT INTO credit_transfers (id, from_type, from_id, to_type, to_id, amount, notes, created_at)
+      VALUES (?, 'AGENT', ?, 'TENANT', ?, ?, 'Reclaimed unused credit from agent', datetime('now'))
+    `).bind(transferId, agentId, tenantId, reclaimAmount),
+
+    c.env.DB.prepare(`
+      INSERT INTO credit_ledger (id, tenant_id, amount, type, reference_id, balance_after, created_at)
+      VALUES (?, ?, ?, 'ADMIN_RECLAIM_AGENT', ?, 0, datetime('now'))
+    `).bind(ledgerId, tenantId, reclaimAmount, agentId)
+  ]);
+
+  return c.json({
+    success: true,
+    reclaimed: reclaimAmount,
+    message: `Successfully reclaimed $${reclaimAmount.toFixed(2)} from ${agent.username || 'agent'}`
   });
 });
 
@@ -834,6 +982,7 @@ admin.get('/agents/status', async (c) => {
       COALESCE(ast.status, 'offline') AS status,
       ast.changed_at,
       u.assigned_phone_number,
+      COALESCE(u.balance_credits, MAX(0.00, COALESCE(u.allocated_credits, 0.00) - COALESCE(u.spent_credits, 0.00))) AS balance_credits,
       COALESCE(u.allocated_credits, 0.00) AS allocated_credits,
       COALESCE(u.spent_credits, 0.00) AS spent_credits,
       a.current_call_id,

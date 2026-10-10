@@ -8,7 +8,9 @@
 export interface TenantBalance {
   tenant_id: string;
   name: string;
+  available_credits: number;
   allocated_credits: number;
+  distributed_credits: number;
   spent_credits: number;
   remaining_balance: number;
   is_active: boolean;
@@ -23,12 +25,14 @@ const MIN_CALL_BALANCE_REQUIRED = 0.05; // $0.05 minimum to start or sustain a c
  */
 export async function getTenantBalance(db: D1Database, tenantId: string): Promise<TenantBalance | null> {
   const tenant = await db
-    .prepare('SELECT id, name, allocated_credits, spent_credits, is_active FROM tenants WHERE id = ?')
+    .prepare('SELECT id, name, available_credits, allocated_credits, distributed_credits, spent_credits, is_active FROM tenants WHERE id = ?')
     .bind(tenantId)
     .first<{
       id: string;
       name: string;
+      available_credits: number;
       allocated_credits: number;
+      distributed_credits: number;
       spent_credits: number;
       is_active: number;
     }>();
@@ -37,14 +41,20 @@ export async function getTenantBalance(db: D1Database, tenantId: string): Promis
 
   const allocated = Number(tenant.allocated_credits ?? 0);
   const spent = Number(tenant.spent_credits ?? 0);
+  const distributed = Number(tenant.distributed_credits ?? 0);
+  const available = tenant.available_credits !== undefined && tenant.available_credits !== null
+    ? Number(tenant.available_credits)
+    : Math.max(0, Math.round((allocated - spent - distributed) * 1000) / 1000);
   const remaining = Math.round((allocated - spent) * 1000) / 1000;
 
   return {
     tenant_id: tenant.id,
     name: tenant.name,
+    available_credits: available,
     allocated_credits: allocated,
+    distributed_credits: distributed,
     spent_credits: spent,
-    remaining_balance: remaining,
+    remaining_balance: available,
     is_active: Boolean(tenant.is_active),
   };
 }
@@ -106,7 +116,12 @@ export async function deductCallCredits(
   const ledgerId = crypto.randomUUID();
 
   const updates = [
-    db.prepare('UPDATE tenants SET spent_credits = ? WHERE id = ?').bind(newSpent, tenantId),
+    db.prepare(`
+      UPDATE tenants 
+      SET spent_credits = spent_credits + ?,
+          distributed_credits = MAX(0, distributed_credits - ?)
+      WHERE id = ?
+    `).bind(amountToDeduct, amountToDeduct, tenantId),
     db.prepare(`
       INSERT INTO credit_ledger (id, tenant_id, amount, type, reference_id, balance_after, created_at)
       VALUES (?, ?, ?, 'CALL_OUTBOUND', ?, ?, datetime('now'))
@@ -115,8 +130,18 @@ export async function deductCallCredits(
 
   if (agentId) {
     updates.push(
-      db.prepare('UPDATE users SET spent_credits = spent_credits + ? WHERE id = ?').bind(amountToDeduct, agentId),
-      db.prepare('UPDATE agents SET spent_credits = spent_credits + ? WHERE id = ?').bind(amountToDeduct, agentId)
+      db.prepare(`
+        UPDATE users 
+        SET balance_credits = MAX(0, COALESCE(balance_credits, 0) - ?),
+            spent_credits = COALESCE(spent_credits, 0) + ? 
+        WHERE id = ?
+      `).bind(amountToDeduct, amountToDeduct, agentId),
+      db.prepare(`
+        UPDATE agents 
+        SET balance_credits = MAX(0, COALESCE(balance_credits, 0) - ?),
+            spent_credits = COALESCE(spent_credits, 0) + ? 
+        WHERE id = ?
+      `).bind(amountToDeduct, amountToDeduct, agentId)
     );
   }
 
@@ -190,19 +215,29 @@ export async function grantTenantCredits(
   }
 
   const newAllocated = tenant.allocated_credits + amount;
-  const newBalance = Math.round((newAllocated - tenant.spent_credits) * 1000) / 1000;
+  const newAvailable = tenant.available_credits + amount;
   const ledgerId = crypto.randomUUID();
+  const transferId = crypto.randomUUID();
 
   await db.batch([
-    db.prepare('UPDATE tenants SET allocated_credits = ? WHERE id = ?').bind(newAllocated, tenantId),
+    db.prepare(`
+      UPDATE tenants 
+      SET allocated_credits = allocated_credits + ?,
+          available_credits = available_credits + ?
+      WHERE id = ?
+    `).bind(amount, amount, tenantId),
     db.prepare(`
       INSERT INTO credit_ledger (id, tenant_id, amount, type, reference_id, balance_after, created_at)
       VALUES (?, ?, ?, 'SUPER_ADMIN_GRANT', ?, ?, datetime('now'))
-    `).bind(ledgerId, tenantId, amount, referenceId || null, newBalance),
+    `).bind(ledgerId, tenantId, amount, referenceId || null, newAvailable),
+    db.prepare(`
+      INSERT INTO credit_transfers (id, from_type, from_id, to_type, to_id, amount, notes, created_at)
+      VALUES (?, 'SUPER_ADMIN', 'master_pool', 'TENANT', ?, ?, ?, datetime('now'))
+    `).bind(transferId, tenantId, amount, referenceId || 'Super Admin balance grant'),
   ]);
 
   return {
     granted: amount,
-    newBalance,
+    newBalance: newAvailable,
   };
 }

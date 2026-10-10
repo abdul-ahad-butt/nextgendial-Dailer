@@ -115,9 +115,15 @@ export const api = {
       request<any>('/admin/agents').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r?.agents) ? r.agents : (Array.isArray(r) ? r : []))),
 
     allocateToAgent: (agentId: string, credits: number, phoneNumber?: string | null) =>
-      request<{ success: boolean; message?: string }>(`/admin/agents/${agentId}/allocate`, {
+      request<{ success: boolean; message?: string; transferred?: number; newAvailableBalance?: number }>(`/admin/agents/${agentId}/allocate`, {
         method: 'POST',
         body: JSON.stringify({ credits, phoneNumber }),
+      }),
+
+    reclaimFromAgent: (agentId: string, amount: number) =>
+      request<{ success: boolean; reclaimed: number; message?: string }>(`/admin/agents/${agentId}/reclaim`, {
+        method: 'POST',
+        body: JSON.stringify({ amount }),
       }),
 
     deleteAgent: (id: string) =>
