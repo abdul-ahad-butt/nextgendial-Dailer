@@ -36,23 +36,81 @@ agent.get('/caller-id', async (c) => {
   return c.json({ callerId });
 });
 
+agent.get('/me', async (c) => {
+  const userId = c.get('userId');
+  const user = await c.env.DB.prepare(`
+    SELECT u.id, u.username, u.role, u.tenant_id, u.assigned_phone_number,
+           COALESCE(u.allocated_credits, 0.00) AS allocated_credits,
+           COALESCE(u.spent_credits, 0.00) AS spent_credits,
+           COALESCE(ast.status, 'offline') AS status
+    FROM users u
+    LEFT JOIN agent_status ast ON u.id = ast.user_id
+    WHERE u.id = ?
+  `).bind(userId).first<any>();
+
+  if (!user) {
+    return c.json({ error: 'Agent not found' }, 404);
+  }
+
+  const remaining = Math.max(0, (user.allocated_credits || 0) - (user.spent_credits || 0));
+
+  return c.json({
+    data: {
+      ...user,
+      remaining_credits: remaining,
+    },
+    agent: {
+      ...user,
+      remaining_credits: remaining,
+    },
+    ...user,
+    remaining_credits: remaining,
+  });
+});
+
 agent.get('/credits', async (c) => {
   const userId = c.get('userId');
-  const user = await c.env.DB.prepare('SELECT tenant_id FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ tenant_id: string | null }>();
+  const user = await c.env.DB.prepare(`
+    SELECT id, tenant_id, 
+           COALESCE(allocated_credits, 0.00) AS allocated_credits,
+           COALESCE(spent_credits, 0.00) AS spent_credits
+    FROM users WHERE id = ?
+  `).bind(userId).first<{ id: string; tenant_id: string | null; allocated_credits: number; spent_credits: number }>();
 
   if (!user?.tenant_id) {
-    return c.json({ data: { remaining_balance: 10.0, is_active: true } });
+    return c.json({
+      credits: 0,
+      allocated: 0,
+      spent: 0,
+      remaining_balance: 0,
+      data: { credits: 0, remaining_balance: 0, allocated_credits: 0, spent_credits: 0, is_active: true }
+    });
   }
 
   const balance = await getTenantBalance(c.env.DB, user.tenant_id);
+  const tenantRemaining = balance?.remaining_balance ?? 0;
+
+  const agentAllocated = Number(user.allocated_credits ?? 0);
+  const agentSpent = Number(user.spent_credits ?? 0);
+  const agentRemaining = Math.max(0, Math.round((agentAllocated - agentSpent) * 1000) / 1000);
+
+  // If organization out of credits, agent cannot dial.
+  // Otherwise, agent's dialable balance is their individual budget (capped by organization balance).
+  const effectiveCredits = tenantRemaining <= 0 ? 0 : Math.min(agentRemaining, tenantRemaining);
+
   return c.json({
+    credits: effectiveCredits,
+    allocated: agentAllocated,
+    spent: agentSpent,
+    remaining_balance: effectiveCredits,
+    tenant_credits: tenantRemaining,
     data: {
-      remaining_balance: balance?.remaining_balance ?? 0,
-      allocated_credits: balance?.allocated_credits ?? 0,
-      spent_credits: balance?.spent_credits ?? 0,
-      is_active: balance?.is_active ?? true,
+      credits: effectiveCredits,
+      remaining_balance: effectiveCredits,
+      allocated_credits: agentAllocated,
+      spent_credits: agentSpent,
+      tenant_remaining_balance: tenantRemaining,
+      is_active: Boolean(balance?.is_active ?? true),
     },
   });
 });

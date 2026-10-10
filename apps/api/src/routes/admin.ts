@@ -129,7 +129,10 @@ admin.get('/dashboard', async (c) => {
 
   // Fetch agents
   const { results: agentsList } = await c.env.DB.prepare(`
-    SELECT id, username, role, tenant_id, created_at, status
+    SELECT id, username, role, tenant_id, created_at, status,
+           COALESCE(allocated_credits, 0.00) AS allocated_credits,
+           COALESCE(spent_credits, 0.00) AS spent_credits,
+           assigned_phone_number
     FROM users 
     WHERE role = 'agent' AND tenant_id = ? AND COALESCE(status, 'offline') != 'deleted'
     ORDER BY created_at DESC
@@ -159,6 +162,9 @@ admin.get('/dashboard', async (c) => {
   const agentsSafe = (agentsList || []).map((a: any) => ({
     ...a,
     name: a.username || 'Agent',
+    allocated_credits: Number(a.allocated_credits ?? 0),
+    spent_credits: Number(a.spent_credits ?? 0),
+    assigned_phone_number: a.assigned_phone_number || null,
   }));
 
   const phoneNumbersSafe = (numbers || []).map((n: any) => ({
@@ -311,13 +317,23 @@ admin.post('/agents', zValidator('json', createUserSchema), async (c) => {
 admin.get('/agents', async (c) => {
   const tenantId = await getEffectiveTenantId(c);
   const { results } = await c.env.DB.prepare(`
-    SELECT id, username, role, tenant_id, created_at, status
+    SELECT id, username, role, tenant_id, created_at, status,
+           COALESCE(allocated_credits, 0.00) AS allocated_credits,
+           COALESCE(spent_credits, 0.00) AS spent_credits,
+           assigned_phone_number
     FROM users 
     WHERE role = 'agent' AND tenant_id = ? AND COALESCE(status, 'offline') != 'deleted'
     ORDER BY created_at DESC
   `).bind(tenantId).all();
 
-  return c.json({ data: results || [] });
+  const formatted = (results || []).map((a: any) => ({
+    ...a,
+    name: a.username || 'Agent',
+    allocated_credits: Number(a.allocated_credits ?? 0),
+    spent_credits: Number(a.spent_credits ?? 0),
+  }));
+
+  return c.json({ data: formatted, agents: formatted });
 });
 
 admin.delete('/agents/:id', async (c) => {
@@ -359,6 +375,103 @@ admin.post('/agents/:id/reset-password', async (c) => {
   await c.env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?").bind(passwordHash, id).run();
 
   return c.json({ success: true, new_password: newPassword });
+});
+
+// ----------------------------------------------------------------
+// Tier 2: Admin -> Agent Credit & Phone Number Allocation
+// ----------------------------------------------------------------
+admin.post('/agents/:id/allocate', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const agentId = c.req.param('id');
+  let body: any = {};
+  try {
+    body = await c.req.json();
+  } catch {}
+
+  const creditAmount = Number(body.credits ?? 0);
+  const phoneNumber = body.phoneNumber ? String(body.phoneNumber).trim() : null;
+
+  if (creditAmount < 0) {
+    return c.json({ error: 'Credit amount cannot be negative' }, 400);
+  }
+
+  // Validate tenant has enough available credits
+  const tenant = await c.env.DB.prepare(
+    `SELECT allocated_credits, spent_credits FROM tenants WHERE id = ?`
+  ).bind(tenantId).first<{ allocated_credits: number; spent_credits: number }>();
+
+  if (!tenant) {
+    return c.json({ error: 'Tenant organization not found' }, 404);
+  }
+
+  const available = (tenant.allocated_credits || 0) - (tenant.spent_credits || 0);
+
+  if (creditAmount > available) {
+    return c.json({
+      error: `Insufficient organization credit to allocate. Available: $${available.toFixed(2)}, Requested: $${creditAmount.toFixed(2)}`
+    }, 400);
+  }
+
+  // Check agent belongs to tenant
+  const agentUser = await c.env.DB.prepare(
+    `SELECT id, username FROM users WHERE id = ? AND tenant_id = ?`
+  ).bind(agentId, tenantId).first();
+
+  if (!agentUser) {
+    return c.json({ error: 'Agent not found in your organization' }, 404);
+  }
+
+  const batchStmts = [];
+
+  // Update users table
+  batchStmts.push(
+    c.env.DB.prepare(`
+      UPDATE users 
+      SET allocated_credits = COALESCE(allocated_credits, 0) + ?,
+          assigned_phone_number = COALESCE(?, assigned_phone_number)
+      WHERE id = ? AND tenant_id = ?
+    `).bind(creditAmount, phoneNumber || null, agentId, tenantId)
+  );
+
+  // Update agents table if exists
+  batchStmts.push(
+    c.env.DB.prepare(`
+      UPDATE agents 
+      SET allocated_credits = COALESCE(allocated_credits, 0) + ?,
+          assigned_phone_number = COALESCE(?, assigned_phone_number)
+      WHERE id = ?
+    `).bind(creditAmount, phoneNumber || null, agentId)
+  );
+
+  // If phone number provided, assign in phone_inventory
+  if (phoneNumber) {
+    batchStmts.push(
+      c.env.DB.prepare(`
+        UPDATE phone_inventory 
+        SET assigned_agent_id = ? 
+        WHERE (phone_number = ? OR friendly_name = ?) AND assigned_tenant_id = ?
+      `).bind(agentId, phoneNumber, phoneNumber, tenantId)
+    );
+  }
+
+  // Record audit entry in credit_ledger if creditAmount > 0
+  if (creditAmount > 0) {
+    batchStmts.push(
+      c.env.DB.prepare(`
+        INSERT INTO credit_ledger (id, tenant_id, amount, type, reference_id, balance_after, created_at)
+        VALUES (?, ?, ?, 'ADMIN_ALLOCATE_AGENT', ?, ?, datetime('now'))
+      `).bind(crypto.randomUUID(), tenantId, creditAmount, agentId, available)
+    );
+  }
+
+  await c.env.DB.batch(batchStmts);
+
+  return c.json({
+    success: true,
+    message: 'Agent updated successfully',
+    allocated_credits: creditAmount,
+    assigned_phone_number: phoneNumber,
+  });
 });
 
 // ----------------------------------------------------------------
@@ -445,6 +558,155 @@ admin.post('/leads/upload', zValidator('json', uploadLeadsSchema), async (c) => 
     skipped,
     errors,
   });
+});
+
+// ----------------------------------------------------------------
+// Leads Query & Assignment (Scoped to Tenant)
+// ----------------------------------------------------------------
+admin.get('/leads', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const batchId = c.req.query('batch_id');
+
+  let sql = `
+    SELECT 
+      l.id,
+      l.phone_number,
+      l.first_name,
+      l.last_name,
+      l.status,
+      l.assigned_user_id,
+      COALESCE(u.username, a.name) AS assigned_agent_username,
+      COALESCE(u.username, a.name) AS agent_name,
+      l.batch_id,
+      b.file_name AS batch_name,
+      l.created_at
+    FROM leads l
+    LEFT JOIN users u ON l.assigned_user_id = u.id
+    LEFT JOIN agents a ON l.assigned_user_id = a.id
+    LEFT JOIN lead_batches b ON l.batch_id = b.id
+    WHERE l.tenant_id = ?
+  `;
+  const params: any[] = [tenantId];
+  if (batchId) {
+    sql += ' AND l.batch_id = ?';
+    params.push(batchId);
+  }
+  sql += ' ORDER BY l.created_at DESC LIMIT 500';
+
+  const { results } = await c.env.DB.prepare(sql).bind(...params).all();
+  return c.json({ data: results || [], leads: results || [] });
+});
+
+admin.delete('/leads/:id', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const leadId = c.req.param('id');
+  await c.env.DB.prepare('DELETE FROM leads WHERE id = ? AND tenant_id = ?').bind(leadId, tenantId).run();
+  return c.json({ success: true, deleted_lead_id: leadId });
+});
+
+admin.patch('/leads/assign', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const { lead_id, user_id } = await c.req.json();
+  await c.env.DB.prepare(
+    'UPDATE leads SET assigned_user_id = ? WHERE id = ? AND tenant_id = ?'
+  ).bind(user_id || null, lead_id, tenantId).run();
+  return c.json({ success: true });
+});
+
+admin.patch('/leads/assign-bulk', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const { lead_ids, user_id } = await c.req.json();
+  if (Array.isArray(lead_ids) && lead_ids.length > 0) {
+    const stmts = lead_ids.map((id: string) =>
+      c.env.DB.prepare('UPDATE leads SET assigned_user_id = ? WHERE id = ? AND tenant_id = ?')
+        .bind(user_id || null, id, tenantId)
+    );
+    await c.env.DB.batch(stmts);
+  }
+  return c.json({ success: true, count: lead_ids?.length || 0 });
+});
+
+admin.patch('/leads/distribute-randomly', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const { lead_ids, user_ids } = await c.req.json();
+  if (Array.isArray(lead_ids) && lead_ids.length > 0 && Array.isArray(user_ids) && user_ids.length > 0) {
+    const stmts = lead_ids.map((leadId: string, idx: number) => {
+      const assignedUser = user_ids[idx % user_ids.length];
+      return c.env.DB.prepare('UPDATE leads SET assigned_user_id = ? WHERE id = ? AND tenant_id = ?')
+        .bind(assignedUser, leadId, tenantId);
+    });
+    await c.env.DB.batch(stmts);
+  }
+  return c.json({ success: true, count: lead_ids?.length || 0 });
+});
+
+// ----------------------------------------------------------------
+// Lead Batches / Sheets (Scoped to Tenant)
+// ----------------------------------------------------------------
+admin.get('/leads/batches', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const { results } = await c.env.DB.prepare(`
+    SELECT 
+      b.id,
+      b.file_name,
+      b.total_leads,
+      b.uploaded_at,
+      u.username AS assigned_agent_username,
+      COALESCE(SUM(CASE WHEN l.status IN ('calling', 'called') THEN 1 ELSE 0 END), 0) AS dialed_count,
+      COALESCE(SUM(CASE WHEN l.status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_count,
+      COALESCE(SUM(CASE WHEN l.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count
+    FROM lead_batches b
+    LEFT JOIN users u ON b.assigned_user_id = u.id
+    LEFT JOIN leads l ON b.id = l.batch_id
+    WHERE b.tenant_id = ?
+    GROUP BY b.id
+    ORDER BY b.uploaded_at DESC
+  `).bind(tenantId).all();
+
+  return c.json({ data: results || [], batches: results || [] });
+});
+
+admin.get('/batches', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const { results } = await c.env.DB.prepare(`
+    SELECT 
+      b.id,
+      b.file_name,
+      b.total_leads,
+      b.uploaded_at,
+      u.username AS assigned_agent_username,
+      COALESCE(SUM(CASE WHEN l.status IN ('calling', 'called') THEN 1 ELSE 0 END), 0) AS dialed_count,
+      COALESCE(SUM(CASE WHEN l.status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_count,
+      COALESCE(SUM(CASE WHEN l.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_count
+    FROM lead_batches b
+    LEFT JOIN users u ON b.assigned_user_id = u.id
+    LEFT JOIN leads l ON b.id = l.batch_id
+    WHERE b.tenant_id = ?
+    GROUP BY b.id
+    ORDER BY b.uploaded_at DESC
+  `).bind(tenantId).all();
+
+  return c.json({ data: results || [], batches: results || [] });
+});
+
+admin.delete('/leads/batch/:id', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const batchId = c.req.param('id');
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM leads WHERE batch_id = ? AND tenant_id = ?').bind(batchId, tenantId),
+    c.env.DB.prepare('DELETE FROM lead_batches WHERE id = ? AND tenant_id = ?').bind(batchId, tenantId),
+  ]);
+  return c.json({ success: true, deleted_batch_id: batchId });
+});
+
+admin.delete('/batches/:id', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const batchId = c.req.param('id');
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM leads WHERE batch_id = ? AND tenant_id = ?').bind(batchId, tenantId),
+    c.env.DB.prepare('DELETE FROM lead_batches WHERE id = ? AND tenant_id = ?').bind(batchId, tenantId),
+  ]);
+  return c.json({ success: true, deleted_batch_id: batchId });
 });
 
 // ----------------------------------------------------------------
@@ -556,7 +818,35 @@ admin.get('/agent-status', async (c) => {
     ORDER BY u.created_at DESC
   `).bind(tenantId).all();
 
-  return c.json({ data: results || [] });
+  return c.json({ data: results || [], agents: results || [] });
+});
+
+// Alias for /agents/status with full real-time metrics
+admin.get('/agents/status', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+
+  const { results } = await c.env.DB.prepare(`
+    SELECT
+      u.id,
+      u.id AS user_id,
+      u.username,
+      u.role,
+      COALESCE(ast.status, 'offline') AS status,
+      ast.changed_at,
+      u.assigned_phone_number,
+      COALESCE(u.allocated_credits, 0.00) AS allocated_credits,
+      COALESCE(u.spent_credits, 0.00) AS spent_credits,
+      a.current_call_id,
+      COALESCE(a.total_calls, 0) AS total_calls,
+      COALESCE(a.total_talk_time_seconds, 0) AS total_talk_time_seconds
+    FROM users u
+    LEFT JOIN agent_status ast ON u.id = ast.user_id
+    LEFT JOIN agents a ON u.id = a.id
+    WHERE u.role = 'agent' AND u.tenant_id = ? AND COALESCE(u.status, 'offline') != 'deleted'
+    ORDER BY u.created_at DESC
+  `).bind(tenantId).all();
+
+  return c.json({ data: results || [], agents: results || [] });
 });
 
 admin.get('/agents/work-summary', async (c) => {
@@ -645,7 +935,58 @@ admin.get('/call-recordings', async (c) => {
       : r.recording_url || null,
   }));
 
-  return c.json({ data });
+  return c.json({ data, recordings: data });
+});
+
+// Alias for frontend compatibility with /recordings
+admin.get('/recordings', async (c) => {
+  const tenantId = await getEffectiveTenantId(c);
+  const agentId = c.req.query('agent_id');
+  const date = c.req.query('date');
+  const appBaseUrl = c.env.APP_BASE_URL || '';
+
+  const conditions: string[] = ['u.tenant_id = ?'];
+  const params: any[] = [tenantId];
+
+  if (agentId) {
+    conditions.push('cr.agent_id = ?');
+    params.push(agentId);
+  }
+  if (date) {
+    conditions.push("date(cr.created_at) = ?");
+    params.push(date);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const { results } = await c.env.DB.prepare(`
+    SELECT 
+      cr.id,
+      cr.call_control_id,
+      cr.call_log_id,
+      cr.agent_id,
+      COALESCE(cr.agent_username, u.username) AS agent_username,
+      cr.destination_number,
+      cr.direction,
+      cr.duration_seconds,
+      cr.r2_key,
+      cr.recording_url,
+      cr.created_at
+    FROM call_recordings cr
+    JOIN users u ON cr.agent_id = u.id
+    ${where}
+    ORDER BY cr.created_at DESC 
+    LIMIT 200
+  `).bind(...params).all();
+
+  const data = (results || []).map((r: any) => ({
+    ...r,
+    playback_url: r.r2_key
+      ? `${appBaseUrl}/api/recordings/${encodeURIComponent(r.r2_key)}`
+      : r.recording_url || null,
+  }));
+
+  return c.json({ data, recordings: data });
 });
 
 export default admin;

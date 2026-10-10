@@ -81,9 +81,10 @@ export async function deductCallCredits(
     tenantId: string;
     callId: string;
     durationSeconds: number;
+    agentId?: string;
   }
 ): Promise<{ deducted: number; newBalance: number }> {
-  const { tenantId, callId, durationSeconds } = params;
+  const { tenantId, callId, durationSeconds, agentId } = params;
 
   if (durationSeconds <= 0) {
     const cur = await getTenantBalance(db, tenantId);
@@ -104,13 +105,22 @@ export async function deductCallCredits(
   const newBalance = Math.round((tenant.allocated_credits - newSpent) * 1000) / 1000;
   const ledgerId = crypto.randomUUID();
 
-  await db.batch([
+  const updates = [
     db.prepare('UPDATE tenants SET spent_credits = ? WHERE id = ?').bind(newSpent, tenantId),
     db.prepare(`
       INSERT INTO credit_ledger (id, tenant_id, amount, type, reference_id, balance_after, created_at)
       VALUES (?, ?, ?, 'CALL_OUTBOUND', ?, ?, datetime('now'))
     `).bind(ledgerId, tenantId, -amountToDeduct, callId, newBalance),
-  ]);
+  ];
+
+  if (agentId) {
+    updates.push(
+      db.prepare('UPDATE users SET spent_credits = spent_credits + ? WHERE id = ?').bind(amountToDeduct, agentId),
+      db.prepare('UPDATE agents SET spent_credits = spent_credits + ? WHERE id = ?').bind(amountToDeduct, agentId)
+    );
+  }
+
+  await db.batch(updates);
 
   return {
     deducted: amountToDeduct,

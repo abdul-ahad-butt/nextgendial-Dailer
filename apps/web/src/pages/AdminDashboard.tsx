@@ -6,8 +6,10 @@ import * as XLSX from 'xlsx';
 import { AdminNumbers } from './AdminNumbers';
 import { CustomSelect } from '../components/common/CustomSelect';
 import { GlassCard } from '../components/common/GlassCard';
+import { ZeroCreditBanner } from '../components/common/ZeroCreditBanner';
+import { AssignAgentModal } from '../components/admin/AssignAgentModal';
 import { formatCurrency } from '../utils/formatters';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Coins } from 'lucide-react';
 
 interface User {
   id: string;
@@ -15,6 +17,9 @@ interface User {
   created_at: string;
   status?: string;
   name?: string;
+  allocated_credits?: number;
+  spent_credits?: number;
+  assigned_phone_number?: string | null;
 }
 
 interface TenantDetails {
@@ -77,26 +82,39 @@ export function AdminDashboard() {
   // Password Modal State
   const [passwordModal, setPasswordModal] = useState<{ username: string; password?: string; isReset?: boolean } | null>(null);
 
+  // Allocate Agent Modal State
+  const [allocatingAgent, setAllocatingAgent] = useState<User | null>(null);
+  const [phoneNumbers, setPhoneNumbers] = useState<any[]>([]);
+
   const fetchTenantData = async () => {
     try {
-      const res = await api.admin.getTenant();
-      if (res) {
-        const rawTenant = res?.tenant || res?.data?.tenant || res?.data || res;
-        const rawStats = res?.stats || res?.data?.stats || res?.data || res;
+      const [res, nums] = await Promise.allSettled([
+        api.admin.getTenant(),
+        api.admin.getPhoneNumbers(),
+      ]);
+
+      if (nums.status === 'fulfilled' && Array.isArray(nums.value)) {
+        setPhoneNumbers(nums.value);
+      }
+
+      if (res.status === 'fulfilled' && res.value) {
+        const val = res.value;
+        const rawTenant = val?.tenant || val?.data?.tenant || val?.data || val;
+        const rawStats = val?.stats || val?.data?.stats || val?.data || val;
 
         setTenantInfo({
           tenant: {
-            id: rawTenant?.id || res?.id || '',
-            name: rawTenant?.name || res?.name || 'Admin Organization',
-            allocated_credits: Number(rawTenant?.allocated_credits ?? res?.allocated_credits ?? 0),
-            spent_credits: Number(rawTenant?.spent_credits ?? res?.spent_credits ?? 0),
-            remaining_credits: Number(rawTenant?.remaining_credits ?? rawTenant?.remaining_balance ?? res?.remaining_balance ?? res?.remaining_credits ?? 0),
-            max_agents: Number(rawTenant?.max_agents ?? res?.max_agents ?? 5),
-            is_active: rawTenant?.is_active ?? res?.is_active ?? 1,
+            id: rawTenant?.id || val?.id || '',
+            name: rawTenant?.name || val?.name || 'Admin Organization',
+            allocated_credits: Number(rawTenant?.allocated_credits ?? val?.allocated_credits ?? 0),
+            spent_credits: Number(rawTenant?.spent_credits ?? val?.spent_credits ?? 0),
+            remaining_credits: Number(rawTenant?.remaining_credits ?? rawTenant?.remaining_balance ?? val?.remaining_balance ?? val?.remaining_credits ?? 0),
+            max_agents: Number(rawTenant?.max_agents ?? val?.max_agents ?? 5),
+            is_active: rawTenant?.is_active ?? val?.is_active ?? 1,
           },
           stats: {
-            agents_count: Number(rawStats?.agents_count ?? res?.agents_count ?? 0),
-            total_calls: Number(rawStats?.total_calls ?? res?.total_calls ?? 0),
+            agents_count: Number(rawStats?.agents_count ?? val?.agents_count ?? 0),
+            total_calls: Number(rawStats?.total_calls ?? val?.total_calls ?? 0),
           },
         });
       }
@@ -398,6 +416,15 @@ export function AdminDashboard() {
         </main>
       ) : (
         <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
+          {/* Tier 1 Super Admin -> Admin Zero-Credit Warning Banner */}
+          {(tenantInfo?.tenant?.remaining_credits ?? 0) <= 0 && (
+            <ZeroCreditBanner
+              type="organization"
+              balance={tenantInfo?.tenant?.remaining_credits ?? 0}
+              onRefresh={fetchTenantData}
+            />
+          )}
+
           {/* Organization Credits & Quota Vitals Banner */}
           {tenantInfo && (
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 animate-fade-in">
@@ -503,38 +530,58 @@ export function AdminDashboard() {
                       <thead>
                         <tr className="border-b border-slate-800 text-slate-400 font-semibold uppercase tracking-wider text-[11px]">
                           <th className="py-2.5 px-3">Agent</th>
+                          <th className="py-2.5 px-3">Budget & Line</th>
                           <th className="py-2.5 px-3">Created</th>
                           <th className="py-2.5 px-3 text-right">Actions</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/60">
-                        {(agents || []).map(a => (
-                          <tr key={a?.id || Math.random()} className="hover:bg-slate-800/30 transition-colors">
-                            <td className="py-3 px-3">
-                              <div className="font-semibold text-slate-200">{a?.username || a?.name || 'Agent'}</div>
-                              <div className="text-[10px] text-slate-400 font-mono">ID: {a?.id ? a.id.slice(0, 8) : 'N/A'}</div>
-                            </td>
-                            <td className="py-3 px-3 text-slate-400">
-                              {a?.created_at ? new Date(a.created_at).toLocaleDateString() : 'N/A'}
-                            </td>
-                            <td className="py-3 px-3 text-right">
-                              <div className="inline-flex items-center gap-2">
-                                <button
-                                  onClick={() => handleResetPassword(a?.id || '', a?.username || a?.name || '')}
-                                  className="px-2.5 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition-colors"
-                                >
-                                  Reset Password
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteAgent(a?.id || '')}
-                                  className="px-2.5 py-1 text-[11px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 rounded-lg border border-rose-500/30 transition-colors"
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
+                        {(agents || []).map(a => {
+                          const budget = Math.max(0, (a?.allocated_credits ?? 0) - (a?.spent_credits ?? 0));
+                          return (
+                            <tr key={a?.id || Math.random()} className="hover:bg-slate-800/30 transition-colors">
+                              <td className="py-3 px-3">
+                                <div className="font-semibold text-slate-200">{a?.username || a?.name || 'Agent'}</div>
+                                <div className="text-[10px] text-slate-400 font-mono">ID: {a?.id ? a.id.slice(0, 8) : 'N/A'}</div>
+                              </td>
+                              <td className="py-3 px-3">
+                                <div className={`font-semibold font-mono ${budget > 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                  {formatCurrency(budget)}
+                                </div>
+                                <div className="text-[10px] text-slate-400 font-mono truncate max-w-[120px]" title={a?.assigned_phone_number || 'Default Line'}>
+                                  {a?.assigned_phone_number || 'Default Line'}
+                                </div>
+                              </td>
+                              <td className="py-3 px-3 text-slate-400">
+                                {a?.created_at ? new Date(a.created_at).toLocaleDateString() : 'N/A'}
+                              </td>
+                              <td className="py-3 px-3 text-right">
+                                <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    onClick={() => setAllocatingAgent(a)}
+                                    className="px-2.5 py-1 text-[11px] bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 rounded-lg border border-emerald-500/30 transition-all flex items-center gap-1"
+                                    title="Allocate budget and phone line"
+                                  >
+                                    <Coins className="w-3 h-3" />
+                                    <span>Allocate</span>
+                                  </button>
+                                  <button
+                                    onClick={() => handleResetPassword(a?.id || '', a?.username || a?.name || '')}
+                                    className="px-2.5 py-1 text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700 transition-colors"
+                                  >
+                                    Reset
+                                  </button>
+                                  <button
+                                    onClick={() => handleDeleteAgent(a?.id || '')}
+                                    className="px-2.5 py-1 text-[11px] bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 rounded-lg border border-rose-500/30 transition-colors"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -661,6 +708,20 @@ export function AdminDashboard() {
             </button>
           </div>
         </div>
+      )}
+
+      {/* Allocate Agent Modal */}
+      {allocatingAgent && (
+        <AssignAgentModal
+          agent={allocatingAgent}
+          organizationAvailableBalance={tenantInfo?.tenant?.remaining_credits ?? 0}
+          availablePhoneNumbers={phoneNumbers}
+          onClose={() => setAllocatingAgent(null)}
+          onSuccess={() => {
+            fetchTenantData();
+            fetchAgents();
+          }}
+        />
       )}
     </div>
   );

@@ -83,14 +83,20 @@ calls.post('/outbound', zValidator('json', outboundCallSchema), async (c) => {
     return c.json({ error: `Invalid number: ${to}. Must be valid phone format.` }, 400);
   }
 
-  // 1. Get the assigned number and tenant for this user
-  const user = await c.env.DB.prepare('SELECT assigned_phone_number, tenant_id FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ assigned_phone_number: string; tenant_id: string }>();
+  // 1. Get the assigned number, tenant, and credit balance for this user
+  const user = await c.env.DB.prepare(
+    'SELECT id, role, assigned_phone_number, tenant_id, COALESCE(allocated_credits, 0.00) AS allocated_credits, COALESCE(spent_credits, 0.00) AS spent_credits FROM users WHERE id = ?'
+  ).bind(userId).first<any>();
 
   const tenantId = user?.tenant_id || c.get('tenantId');
 
-  // Pre-flight Credit Verification
+  // Agent-level zero-credit lockout verification
+  const agentRemaining = (user?.allocated_credits ?? 0) - (user?.spent_credits ?? 0);
+  if (user?.role === 'agent' && agentRemaining <= 0) {
+    return c.json({ error: 'Out of Calling Credits ($0.00) — Please contact your administrator.' }, 402);
+  }
+
+  // Tenant-level pre-flight Credit Verification
   if (tenantId) {
     try {
       await verifyPreCallCredits(c.env.DB, tenantId);
@@ -154,11 +160,17 @@ calls.post('/manual', zValidator('json', manualCallSchema), async (c) => {
   }
 
   // Check agent & tenant credentials
-  const user = await c.env.DB.prepare('SELECT id, username, tenant_id, assigned_phone_number FROM users WHERE id = ?')
-    .bind(body.agentId)
-    .first<{ id: string; username: string; tenant_id: string | null; assigned_phone_number: string | null }>();
+  const user = await c.env.DB.prepare(
+    'SELECT id, username, role, tenant_id, assigned_phone_number, COALESCE(allocated_credits, 0.00) AS allocated_credits, COALESCE(spent_credits, 0.00) AS spent_credits FROM users WHERE id = ?'
+  ).bind(body.agentId).first<any>();
 
   const tenantId = user?.tenant_id || c.get('tenantId');
+
+  // Agent-level zero-credit lockout verification
+  const agentRemaining = (user?.allocated_credits ?? 0) - (user?.spent_credits ?? 0);
+  if (user?.role === 'agent' && agentRemaining <= 0) {
+    return c.json({ error: 'Out of Calling Credits ($0.00) — Please contact your administrator.' }, 402);
+  }
 
   // Pre-flight Credit Verification
   if (tenantId) {
@@ -314,6 +326,7 @@ calls.patch('/:id', zValidator('json', updateCallSchema), async (c) => {
         tenantId: existingLog.tenant_id,
         callId: id,
         durationSeconds: resolvedDurationSeconds,
+        agentId: existingLog.agent_id || undefined,
       });
     } catch (e: any) {
       console.error('[calls.patch] Credit deduction error:', e.message);

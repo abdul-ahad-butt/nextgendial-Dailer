@@ -395,6 +395,7 @@ async function handleCallHangup(
           tenantId: callLog.tenant_id,
           callId: callLog.id,
           durationSeconds: duration,
+          agentId: callLog.agent_id || undefined,
         });
       } catch (err: any) {
         console.error('[dialer] Credit deduction error:', err?.message);

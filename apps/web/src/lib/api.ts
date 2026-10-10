@@ -65,8 +65,15 @@ export const api = {
   agent: {
     getCallerId: () =>
       request<{ callerId: string }>('/agent/caller-id').then((r) => r.callerId),
+    getProfile: () =>
+      request<any>('/agent/me').then((r) => r?.data || r?.agent || r),
     getCredits: () =>
-      request<{ credits: number; allocated: number; spent: number }>('/agent/credits'),
+      request<any>('/agent/credits').then((r) => {
+        const creds = r?.credits ?? r?.data?.credits ?? r?.data?.remaining_balance ?? 0;
+        const allocated = r?.allocated ?? r?.data?.allocated_credits ?? 0;
+        const spent = r?.spent ?? r?.data?.spent_credits ?? 0;
+        return { credits: Number(creds), allocated: Number(allocated), spent: Number(spent) };
+      }),
     status: () =>
       request<{ status: AgentStatus; changed_at: string }>('/agent/status'),
     setStatus: (status: AgentStatus) =>
@@ -105,7 +112,13 @@ export const api = {
 
   admin: {
     getAgents: () =>
-      request<any>('/admin/agents').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
+      request<any>('/admin/agents').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r?.agents) ? r.agents : (Array.isArray(r) ? r : []))),
+
+    allocateToAgent: (agentId: string, credits: number, phoneNumber?: string | null) =>
+      request<{ success: boolean; message?: string }>(`/admin/agents/${agentId}/allocate`, {
+        method: 'POST',
+        body: JSON.stringify({ credits, phoneNumber }),
+      }),
 
     deleteAgent: (id: string) =>
       request<{ success: boolean; deleted_agent_id: string }>(`/admin/agents/${id}`, {
@@ -118,7 +131,10 @@ export const api = {
       }),
 
     getAgentStatus: () =>
-      request<any>('/admin/agent-status').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
+      request<any>('/admin/agent-status').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r?.agents) ? r.agents : (Array.isArray(r) ? r : []))),
+
+    getAgentStatuses: () =>
+      request<any>('/admin/agents/status').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r?.agents) ? r.agents : (Array.isArray(r) ? r : []))),
 
     getWorkSummary: () =>
       request<any>('/admin/agents/work-summary').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : [])),
@@ -128,8 +144,19 @@ export const api = {
       if (agentId) qs.set('agent_id', agentId);
       if (date) qs.set('date', date);
       const query = qs.toString();
-      return request<any>(`/admin/call-recordings${query ? `?${query}` : ''}`).then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r) ? r : []));
+      return request<any>(`/admin/call-recordings${query ? `?${query}` : ''}`).then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r?.recordings) ? r.recordings : (Array.isArray(r) ? r : [])));
     },
+
+    getRecordings: (agentId?: string, date?: string) => {
+      const qs = new URLSearchParams();
+      if (agentId) qs.set('agent_id', agentId);
+      if (date) qs.set('date', date);
+      const query = qs.toString();
+      return request<any>(`/admin/recordings${query ? `?${query}` : ''}`).then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r?.recordings) ? r.recordings : (Array.isArray(r) ? r : [])));
+    },
+
+    getPhoneNumbers: () =>
+      request<any>('/admin/phone-numbers').then((r) => Array.isArray(r?.data) ? r.data : (Array.isArray(r?.phone_numbers) ? r.phone_numbers : (Array.isArray(r) ? r : []))),
 
     createAgent: (data: { username: string; password: string }) =>
       request<{ data: any }>('/admin/agents', {

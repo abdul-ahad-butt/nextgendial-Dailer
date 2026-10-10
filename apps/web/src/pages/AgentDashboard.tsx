@@ -23,6 +23,7 @@ import { CallbackDrawer } from '../components/dialer/CallbackDrawer';
 import { SMSInbox } from '../components/messaging/SMSInbox';
 import { DispositionModal } from '../components/DispositionModal';
 import { TelephonyVisualizer3D } from '../components/3d/TelephonyVisualizer3D';
+import { ZeroCreditBanner } from '../components/common/ZeroCreditBanner';
 import { api } from '../lib/api';
 import { getAudioMuted, setAudioMuted, initAudioContext } from '../lib/audio';
 import { formatCurrency, formatE164 } from '../utils/formatters';
@@ -172,10 +173,11 @@ export function AgentDashboard({ agent, onLogout }: Props) {
     async (number: string, leadId?: string) => {
       initAudioContext().catch(() => {});
 
-      if (creditBalance && creditBalance.credits < 0.05) {
+      if (creditBalance && (creditBalance.credits <= 0 || creditBalance.credits < 0.05)) {
         setToastType('error');
-        setToastMessage('Outbound call blocked: Insufficient organization credits. Please contact admin.');
+        setToastMessage('Outbound call blocked: Out of calling credits ($0.00). Please contact your administrator.');
         setTimeout(() => setToastMessage(null), 6000);
+        alert('Insufficient credits. Please contact your admin to assign credits.');
         return;
       }
 
@@ -245,6 +247,8 @@ export function AgentDashboard({ agent, onLogout }: Props) {
   }, [isAutoDialEnabled, currentStatus, connectionState, activeCall, showDisposition, handleManualCall, leads, creditBalance]);
 
   const displayAgent = agent;
+  const isOutOfCredit = (creditBalance?.credits ?? 0) <= 0 || (creditBalance !== null && creditBalance.credits < 0.05);
+
   const visualizerStatus = activeCall
     ? 'active'
     : currentStatus === 'dialing' || currentStatus === 'on_call'
@@ -277,23 +281,25 @@ export function AgentDashboard({ agent, onLogout }: Props) {
 
         {/* Global Controls & Status */}
         <div className="flex items-center gap-3">
-          {/* Tenant Credits Safeguard Pill */}
+          {/* Agent Credits Safeguard Pill */}
           {creditBalance !== null && (
             <div
               className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-mono transition-all shadow-sm ${
-                creditBalance.credits < 0.5
+                isOutOfCredit
+                  ? 'bg-amber-950/60 border-amber-800/80 text-amber-300 ring-1 ring-amber-500/30'
+                  : creditBalance.credits < 0.5
                   ? 'bg-rose-950/50 border-rose-800/60 text-rose-300'
                   : 'bg-slate-900/80 border-slate-700/60 text-slate-300'
               }`}
-              title="Organization Prepaid Calling Credits"
+              title="Agent Calling Credits"
             >
               <span className="text-[10px] uppercase font-sans font-semibold text-slate-400">Credit:</span>
-              <span className="font-bold text-emerald-400">
+              <span className={`font-bold ${isOutOfCredit ? 'text-amber-400' : 'text-emerald-400'}`}>
                 {formatCurrency(creditBalance.credits)}
               </span>
-              {creditBalance.credits < 0.05 && (
-                <span className="text-[10px] bg-rose-500 text-white px-1.5 py-0.5 rounded font-sans uppercase font-bold animate-pulse">
-                  Cutoff
+              {isOutOfCredit && (
+                <span className="text-[10px] bg-amber-500 text-slate-950 px-1.5 py-0.5 rounded font-sans uppercase font-bold animate-pulse">
+                  Locked
                 </span>
               )}
             </div>
@@ -376,25 +382,14 @@ export function AgentDashboard({ agent, onLogout }: Props) {
         </div>
       </header>
 
-      {/* Credit Lockout Warning Banner */}
-      {creditBalance && creditBalance.credits < 0.05 && (
-        <div className="bg-rose-950/70 border-b border-rose-800/80 px-6 py-2.5 flex items-center justify-between text-xs text-rose-200">
-          <div className="flex items-center gap-2">
-            <span className="text-base">🚨</span>
-            <span>
-              <strong>Outbound Calling Disabled:</strong> Your organization credit balance is{' '}
-              <span className="font-mono font-bold text-rose-300">{formatCurrency(creditBalance.credits)}</span>.
-              Please contact your administrator to refill prepaid credits.
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={fetchCredits}
-            className="text-[11px] px-2.5 py-1 bg-rose-900/60 hover:bg-rose-800 border border-rose-700 rounded-lg transition-colors"
-          >
-            Refresh Balance
-          </button>
-        </div>
+      {/* Agent Zero-Credit Lockout Warning Banner */}
+      {isOutOfCredit && (
+        <ZeroCreditBanner
+          type="agent"
+          balance={creditBalance?.credits ?? 0}
+          onRefresh={fetchCredits}
+          className="mx-6 mt-3"
+        />
       )}
 
       {/* Status Error Alert Banner */}
@@ -463,9 +458,18 @@ export function AgentDashboard({ agent, onLogout }: Props) {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setIsAutoDialEnabled(!isAutoDialEnabled)}
+                    disabled={isOutOfCredit}
+                    onClick={() => {
+                      if (isOutOfCredit) {
+                        alert('Insufficient credits. Please contact your admin to assign credits.');
+                        return;
+                      }
+                      setIsAutoDialEnabled(!isAutoDialEnabled);
+                    }}
                     className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-all ${
-                      isAutoDialEnabled
+                      isOutOfCredit
+                        ? 'bg-slate-800/60 text-slate-600 cursor-not-allowed opacity-40'
+                        : isAutoDialEnabled
                         ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
                         : 'bg-slate-800 text-slate-400 hover:text-slate-200'
                     }`}
@@ -515,8 +519,15 @@ export function AgentDashboard({ agent, onLogout }: Props) {
             </div>
           ) : (
             <Keypad
-              onCall={handleManualCall}
+              onCall={(num: string) => {
+                if (isOutOfCredit) {
+                  alert('Insufficient credits. Please contact your admin to assign credits.');
+                  return;
+                }
+                handleManualCall(num);
+              }}
               disabled={
+                isOutOfCredit ||
                 connectionState !== 'ready' ||
                 currentStatus === 'on_call' ||
                 currentStatus === 'dialing' ||

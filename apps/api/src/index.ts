@@ -137,6 +137,52 @@ async function ensureSchema(db: D1Database) {
     try { await db.prepare('ALTER TABLE lead_batches ADD COLUMN tenant_id TEXT;').run(); } catch {}
     try { await db.prepare('ALTER TABLE call_logs ADD COLUMN tenant_id TEXT;').run(); } catch {}
 
+    // Add agent credits and phone numbers columns
+    try { await db.prepare('ALTER TABLE users ADD COLUMN allocated_credits REAL DEFAULT 0.00;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE users ADD COLUMN spent_credits REAL DEFAULT 0.00;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE users ADD COLUMN assigned_phone_number TEXT;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE agents ADD COLUMN allocated_credits REAL DEFAULT 0.00;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE agents ADD COLUMN spent_credits REAL DEFAULT 0.00;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE agents ADD COLUMN assigned_phone_number TEXT;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE agents ADD COLUMN current_call_id TEXT;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE agents ADD COLUMN total_calls INTEGER DEFAULT 0;').run(); } catch {}
+    try { await db.prepare('ALTER TABLE agents ADD COLUMN total_talk_time_seconds INTEGER DEFAULT 0;').run(); } catch {}
+
+    // Ensure lead batches & recordings tables exist
+    try {
+      await db.prepare(`
+        CREATE TABLE IF NOT EXISTS lead_batches (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL REFERENCES tenants(id),
+          file_name TEXT NOT NULL,
+          total_leads INTEGER DEFAULT 0,
+          processed_leads INTEGER DEFAULT 0,
+          assigned_user_id TEXT,
+          assignment_mode TEXT DEFAULT 'assigned',
+          uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `).run();
+    } catch {}
+
+    try {
+      await db.prepare(`
+        CREATE TABLE IF NOT EXISTS call_recordings (
+          id TEXT PRIMARY KEY,
+          tenant_id TEXT NOT NULL REFERENCES tenants(id),
+          agent_id TEXT REFERENCES users(id),
+          call_control_id TEXT,
+          call_log_id TEXT,
+          agent_username TEXT,
+          destination_number TEXT,
+          direction TEXT DEFAULT 'outbound',
+          duration_seconds INTEGER DEFAULT 0,
+          r2_key TEXT,
+          recording_url TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `).run();
+    } catch {}
+
     // Seed default Super Admin if none exists
     const superAdmin = await db.prepare('SELECT id FROM super_admins LIMIT 1').first();
     if (!superAdmin) {
